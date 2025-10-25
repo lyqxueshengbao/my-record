@@ -55,7 +55,9 @@ class CarradaExecutor(pl.LightningModule):
         self.rd_metrics = Evaluator(self.nb_classes)
         self.ra_metrics = Evaluator(self.nb_classes)
 
-        self.save_hyperparameters(config)
+        # self.save_hyperparameters(config)
+        self.hparams.update(config)
+
 
     def define_loss(self, signal_type, custom_loss, weight_path):
         """

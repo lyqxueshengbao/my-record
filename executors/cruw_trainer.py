@@ -36,10 +36,10 @@ class CruwExecutor(pl.LightningModule):
         self.win_size = self.train_cfg['win_size']
         self.model_name = self.model_cfg['name']
 
-        hp_dict = {'model_cfg': config_dict['model_cfg'],
-                   'train_cfg': config_dict['train_cfg']}
-        self.save_hyperparameters(hp_dict)
-
+        # hp_dict = {'model_cfg': config_dict['model_cfg'],
+        #            'train_cfg': config_dict['train_cfg']}
+        # self.save_hyperparameters(hp_dict)
+        # self.save_hyperparameters(ignore=['model', 'train_dataset', 'val_dataset', 'cruw_dataset_obj'])
         # Model
         self.model = model
         self.loss_fct = self.get_loss()

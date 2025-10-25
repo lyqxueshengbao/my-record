@@ -120,7 +120,7 @@ if torch.cuda.is_available():
 else:
     print('WARNING: CUDA not available, use CPU')
     accelerator = 'cpu'
-trainer = pl.Trainer(logger=logger, callbacks=callbacks, accelerator=accelerator, devices=1,
+trainer = pl.Trainer(logger=logger, callbacks=callbacks, accelerator=accelerator, strategy='ddp', devices=6,
                      max_epochs=train_cfg['n_epoch'],
                      accumulate_grad_batches=train_cfg['accumulate_grad'])
 
