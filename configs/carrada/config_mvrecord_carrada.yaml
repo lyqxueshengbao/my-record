@@ -2,7 +2,7 @@ version: 1.0
 dataset_cfg:
   dataset_name: CARRADA
   warehouse: /home/liyuqin/datasets/
-  carrada: /home/liyuqin/datasets/Carrada/
+  carrada: /home/liyuqin/datasets/Carrada/raw/Carrada/
   weight_path: /home/liyuqin/projects/record//configs/carrada/weights_config
   project_path: /home/liyuqin/projects/record//
   annot_type: dense
