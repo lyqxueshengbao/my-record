@@ -1,15 +1,4 @@
 version: 1.0
-<<<<<<< HEAD
-dataset_cfg:
-  dataset_name: CARRADA
-  warehouse: /home/liyuqin/datasets/
-  carrada: /home/liyuqin/datasets/Carrada/
-  weight_path: /home/liyuqin/projects/record//configs/carrada/weights_config
-  project_path: /home/liyuqin/projects/record//
-  annot_type: dense
-model_cfg:
-  name: MV-RECORD-OI
-=======
 
 dataset_cfg:
   dataset_name: 'CARRADA'
@@ -21,27 +10,18 @@ dataset_cfg:
   
 model_cfg:
   name: 'MV-RECORD-OI'
->>>>>>> 52b6f371224923476a83682eba04d7bafe8e4f69
   process_signal: true
   w_size: 256
   h_size: 256
   nb_classes: 4
   in_channels: 1
   win_size: 10
-<<<<<<< HEAD
-  backbone_pth: /home/liyuqin/projects/record//models/configs/mv_record.yaml
-  width_mult: 1.0
-  norm: layer
-train_cfg:
-  ckpt_dir: logs/carrada
-=======
   backbone_pth: 'path_to_project/models/configs/mv_record.yaml'
   width_mult: 1.0
   norm: "layer"
 
 train_cfg:
   ckpt_dir: 'path_to_log/carrada/'
->>>>>>> 52b6f371224923476a83682eba04d7bafe8e4f69
   n_epoch: 500
   batch_size: 4
   accumulate_grad: 2
@@ -50,13 +30,7 @@ train_cfg:
   loss_step: 100
   val_step: 2000
   viz_step: 4000
-<<<<<<< HEAD
-  loss: wce_w10sdice
-  transformations: hflip, vflip
-  norm_type: tvt
-=======
   loss: 'wce_w10sdice'
   transformations: "hflip, vflip"
   norm_type: 'tvt'
->>>>>>> 52b6f371224923476a83682eba04d7bafe8e4f69
   shuffle: true
