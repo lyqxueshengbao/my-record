@@ -8,7 +8,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, Learning
 from pytorch_lightning.loggers import TensorBoardLogger
 from utils import update_config_dict, get_transformations, get_models
 from datasets import SequenceCarradaDataset, CarradaDataset, Carrada, CarradaDatasetRangeDoppler, CarradaDatasetRangeAngle
-
+NUM_WORKERS = 4
 def parse_args():
     parser = argparse.ArgumentParser(description='MV-RECORD')
     parser.add_argument('--config', type=str, help='configuration file path')
@@ -64,7 +64,7 @@ for _, data in enumerate(seq_dataloader):
                                        process_signal=True, transformations=transformations,
                                        n_frames=n_frames, add_temp=True))
 train_dataloader = DataLoader(ConcatDataset(all_datasets), batch_size=train_cfg['batch_size'], shuffle=True,
-                              num_workers=0, pin_memory=True)
+                              num_workers=NUM_WORKERS, pin_memory=True,persistent_workers=True)
 
 # Val dataset
 val_dataset = Carrada(config).get('Validation')
@@ -120,12 +120,12 @@ if torch.cuda.is_available():
 else:
     print('WARNING: CUDA not available, use CPU')
     accelerator = 'cpu'
-trainer = pl.Trainer(logger=logger, callbacks=callbacks, accelerator=accelerator, strategy='ddp', devices=6,
+trainer = pl.Trainer(logger=logger, callbacks=callbacks, accelerator=accelerator, strategy='ddp_find_unused_parameters_false', devices=6,
                      max_epochs=train_cfg['n_epoch'],
                      accumulate_grad_batches=train_cfg['accumulate_grad'])
 
 print('Start training')
-trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader, ckpt_path=args.resume_ckpt)
+trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
 
 print('Test model')
 # Test dataset

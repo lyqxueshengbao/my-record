@@ -1,25 +1,49 @@
 version: 1.0
+<<<<<<< HEAD
 dataset_cfg:
   dataset_name: CARRADA
   warehouse: /home/liyuqin/datasets/
-  carrada: /home/liyuqin/datasets/Carrada/raw/Carrada/
+  carrada: /home/liyuqin/datasets/Carrada/
   weight_path: /home/liyuqin/projects/record//configs/carrada/weights_config
   project_path: /home/liyuqin/projects/record//
   annot_type: dense
 model_cfg:
   name: RECORD-RA-OI
+=======
+
+dataset_cfg:
+  dataset_name: 'CARRADA'
+  warehouse: 'path_to_datasets/'
+  carrada: 'path_to_datasets/Carrada/'
+  weight_path: 'path_to_project/configs/carrada/'
+  project_path: 'path_to_project/'
+  annot_type: 'dense'
+  
+model_cfg:
+  name: 'RECORD-RA-OI'
+>>>>>>> 52b6f371224923476a83682eba04d7bafe8e4f69
   process_signal: true
   w_size: 256
   h_size: 256
   nb_classes: 4
   in_channels: 1
   win_size: 10
+<<<<<<< HEAD
   backbone_pth: /home/liyuqin/projects/record//models/configs/record_carrada_ra.yaml
   width_mult: 1.0
   norm: layer
   view: range_angle
 train_cfg:
   ckpt_dir: logs/carrada
+=======
+  backbone_pth: 'path_to_project/models/configs/record_carrada_ra.yaml'
+  width_mult: 1.0
+  norm: "layer"
+  view: 'range_angle'
+
+train_cfg:
+  ckpt_dir: 'path_to_log/carrada/'
+>>>>>>> 52b6f371224923476a83682eba04d7bafe8e4f69
   n_epoch: 500
   batch_size: 8
   accumulate_grad: 1
@@ -28,7 +52,13 @@ train_cfg:
   loss_step: 100
   val_step: 2000
   viz_step: 4000
+<<<<<<< HEAD
   loss: wce_w10sdice
   transformations: hflip, vflip
   norm_type: tvt
+=======
+  loss: 'wce_w10sdice'
+  transformations: "hflip, vflip"
+  norm_type: 'tvt'
+>>>>>>> 52b6f371224923476a83682eba04d7bafe8e4f69
   shuffle: true

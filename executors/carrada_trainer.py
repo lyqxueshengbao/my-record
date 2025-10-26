@@ -81,7 +81,7 @@ class CarradaExecutor(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr, capturable=True)
         self.scheduler = {
             'scheduler': torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=0.9),
             'interval': 'epoch',
@@ -170,8 +170,8 @@ class CarradaExecutor(pl.LightningModule):
                 'train/ra_ce': ra_losses[0],
                 'train/ra_Dice': ra_losses[1]
             }
-        self.log_dict(loss_dict, prog_bar=False, on_step=True, on_epoch=True, logger=True)
-        self.log('hp/train_loss', loss, on_step=False, on_epoch=True, prog_bar=False, logger=True)
+        self.log_dict(loss_dict, prog_bar=False, on_step=True, on_epoch=True, logger=True, sync_dist=True)
+        self.log('hp/train_loss', loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
 
         return loss
 
@@ -201,9 +201,9 @@ class CarradaExecutor(pl.LightningModule):
             'val_metrics/global_dice': test_results['global_dice']
         }
 
-        self.log_dict(test_results_log, on_epoch=True)
-        self.log("hp/val_global_prec", test_results['global_prec'], on_epoch=True)
-        self.log("hp/val_global_dice", test_results['global_dice'], on_epoch=True)
+        self.log_dict(test_results_log, on_epoch=True,sync_dist=True)
+        self.log("hp/val_global_prec", test_results['global_prec'], on_epoch=True,sync_dist=True)
+        self.log("hp/val_global_dice", test_results['global_dice'], on_epoch=True,sync_dist=True)
         self.rd_metrics.reset()
         self.ra_metrics.reset()
 
@@ -275,8 +275,8 @@ class CarradaExecutor(pl.LightningModule):
                 'val/ra_ce': ra_losses[0],
                 'val/ra_Dice': ra_losses[1]      
             }
-        self.log_dict(loss_dict, prog_bar=False, on_step=False, on_epoch=True, logger=True)
-        self.log('hp/val_loss', loss, on_step=False, on_epoch=True, prog_bar=False, logger=True)
+        self.log_dict(loss_dict, prog_bar=False, on_step=False, on_epoch=True, logger=True, sync_dist=True)
+        self.log('hp/val_loss', loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True)
 
     def test_step(self, batch, batch_id):
         """
@@ -351,7 +351,7 @@ class CarradaExecutor(pl.LightningModule):
         }
 
         self.log_dict(test_results_log, on_epoch=True)
-        self.log(name='hp/test_rd_miou', value=test_results['range_doppler']['miou'], on_epoch=True)
-        self.log(name="hp/test_ra_miou", value=test_results['range_angle']['miou'], on_epoch=True)
+        self.log(name='hp/test_rd_miou', value=test_results['range_doppler']['miou'], on_epoch=True, sync_dist=True)
+        self.log(name="hp/test_ra_miou", value=test_results['range_angle']['miou'], on_epoch=True, sync_dist=True)
         self.rd_metrics.reset()
         self.ra_metrics.reset()
