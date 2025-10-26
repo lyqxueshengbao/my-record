@@ -125,7 +125,7 @@ trainer = pl.Trainer(logger=logger, callbacks=callbacks, accelerator=accelerator
                      accumulate_grad_batches=train_cfg['accumulate_grad'])
 
 print('Start training')
-trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader, ckpt_path=args.resume_ckpt)
+trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
 
 print('Test model')
 # Test dataset
