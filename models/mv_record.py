@@ -4,7 +4,7 @@ from models.record import RecordEncoder, RecordDecoder
 
 
 class MVRecord(nn.Module):
-    def __init__(self, config, n_frames, in_channels=1, n_classes=4, norm='layer'):
+    def __init__(self, config, n_frames, in_channels=1, n_classes=4, norm='batch'):
         """
         Multi view RECurrent Online object detectOR (MV-RECORD) model class
         @param config: config dict to build the model
