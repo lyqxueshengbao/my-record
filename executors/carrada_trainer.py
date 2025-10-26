@@ -81,7 +81,7 @@ class CarradaExecutor(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr, capturable=True)
         self.scheduler = {
             'scheduler': torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=0.9),
             'interval': 'epoch',
