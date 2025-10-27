@@ -4,25 +4,27 @@ from torch.autograd import Variable
 
 
 class BottleneckLSTMCell(nn.Module):
-    def __init__(self, input_channels, hidden_channels, kernel_size=3, norm='layer'):
+    def __init__(self, input_channels, hidden_channels, kernel_size=3, norm='layer', num_groups=8):
         """
         From: https://github.com/vikrant7/mobile-vod-bottleneck-lstm/blob/master/network/mvod_bottleneck_lstm1.py
         Creates a bottleneck LSTM cell
         @param input_channels: number of input channels
         @param hidden_channels: number of hidden channels
         @param kernel_size: size of the kernel for convolutions (gates)
-        @param norm: normalisation to use on output gates (default: LayerNorm) - Other normalisation not implemented yet
+        @param norm: normalisation to use on output gates (default: 'layer' uses GN)
+        @param num_groups: number of groups for GroupNorm (default: 8)
         """
         super(BottleneckLSTMCell, self).__init__()
         assert hidden_channels % 2 == 0
-        
+
         self.input_channels = int(input_channels)
         self.hidden_channels = int(hidden_channels)
         self.norm = norm
+        self.num_groups = num_groups
 
         self.W = nn.Conv2d(in_channels=self.input_channels, out_channels=self.input_channels, kernel_size=kernel_size,
                            groups=self.input_channels, stride=1, padding=1)
-        self.Wy = nn.Conv2d(int(self.input_channels+self.hidden_channels), self.hidden_channels, kernel_size=1)
+        self.Wy = nn.Conv2d(int(self.input_channels + self.hidden_channels), self.hidden_channels, kernel_size=1)
         self.Wi = nn.Conv2d(self.hidden_channels, self.hidden_channels, kernel_size, 1, 1,
                             groups=self.hidden_channels, bias=False)
         self.Wbi = nn.Conv2d(self.hidden_channels, self.hidden_channels, 1, 1, 0, bias=False)
@@ -33,14 +35,20 @@ class BottleneckLSTMCell(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
         if norm is not None:
-            if norm == 'layer':
-                self.norm_wbi = nn.GroupNorm(1, self.hidden_channels)
-                self.norm_wbf = nn.GroupNorm(1, self.hidden_channels)
-                self.norm_wbc = nn.GroupNorm(1, self.hidden_channels)
-                self.norm_wbo = nn.GroupNorm(1, self.hidden_channels)
+            # Helper function to create GroupNorm with proper num_groups
+            def _get_norm(channels):
+                effective_num_groups = min(self.num_groups, channels)
+                while channels % effective_num_groups != 0:
+                    effective_num_groups -= 1
+                return nn.GroupNorm(effective_num_groups, channels)
+
+            self.norm_wbi = _get_norm(self.hidden_channels)
+            self.norm_wbf = _get_norm(self.hidden_channels)
+            self.norm_wbc = _get_norm(self.hidden_channels)
+            self.norm_wbo = _get_norm(self.hidden_channels)
 
         self._initialize_weights()
-        
+
     def _initialize_weights(self):
         """
         Initialized bias of the cell (default to 1)
@@ -60,11 +68,11 @@ class BottleneckLSTMCell(nn.Module):
         """
         x = self.W(x)
         # Concat "gate": concatenate input and hidden layers
-        y = torch.cat((x, h),1) 
+        y = torch.cat((x, h), 1)
         # Bottleneck gate: reduce to hidden layer size
-        i = self.Wy(y) 
-        b = self.Wi(i)	# depth wise 3*3
-        
+        i = self.Wy(y)
+        b = self.Wi(i)  # depth wise 3*3
+
         # Input gate
         if self.norm is not None:
             ci = self.sigmoid(self.norm_wbi(self.Wbi(b)))
@@ -106,18 +114,19 @@ class BottleneckLSTMCell(nn.Module):
 
 
 class BottleneckLSTM(nn.Module):
-    def __init__(self, input_channels, hidden_channels, norm='layer'):
+    def __init__(self, input_channels, hidden_channels, norm='layer', num_groups=8):
         """
         Single layer Bottleneck LSTM cell
         @param input_channels: number of input channels of the cell
         @param hidden_channels: number of hidden channels of the cell
-        @param norm: normalisation to use (default: LayerNorm) - Other normalisation are not implemented yet.
+        @param norm: normalisation to use (default: 'layer' uses GN)
+        @param num_groups: number of groups for GroupNorm (default: 8)
         """
         super(BottleneckLSTM, self).__init__()
         self.input_channels = int(input_channels)
         self.hidden_channels = int(hidden_channels)
 
-        self.cell = BottleneckLSTMCell(self.input_channels, self.hidden_channels, norm=norm)
+        self.cell = BottleneckLSTMCell(self.input_channels, self.hidden_channels, norm=norm, num_groups=num_groups)
 
     def forward(self, inputs, h, c):
         """
