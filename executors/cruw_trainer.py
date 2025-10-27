@@ -105,7 +105,7 @@ class CruwExecutor(pl.LightningModule):
         """
         confmap_pred = self.model(x)
         return confmap_pred
-    
+
     def training_step(self, batch, batch_id):
         """
         Perform one training step (forward + backward) on a batch of data.
@@ -115,11 +115,12 @@ class CruwExecutor(pl.LightningModule):
         """
         # Get data
         ra_maps = batch['radar_data']  # N, H, W, C
-        confmap_gts = batch['anno']['confmaps']
+        confmap_gts = batch['anno']['confmaps']  # May contain soft labels from MixUp
         image_paths = batch['image_paths']
 
         confmap_pred = self.model(ra_maps)
 
+        # Loss function automatically handles soft labels from MixUp
         loss = self.loss_fct(confmap_pred, confmap_gts)
 
         self.log('train_loss', loss, on_step=True, on_epoch=True, logger=True)

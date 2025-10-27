@@ -4,7 +4,7 @@ import pickle
 import numpy as np
 import time
 from .parse_pkl import list_pkl_filenames_from_prepared
-from .transforms import random_apply
+from .transforms import random_apply, sequence_mixup, spatial_mixup
 
 from torch.utils import data
 import torch
@@ -31,6 +31,12 @@ class ROD2021Dataset(data.Dataset):
         self.all_confmaps = all_confmaps
         self.model_name = config_dict['model_cfg']['name']
         self.aug_dict = config_dict['train_cfg']['aug']
+
+        # MixUp configuration
+        self.use_mixup = config_dict['train_cfg'].get('use_mixup', False)
+        self.mixup_alpha = config_dict['train_cfg'].get('mixup_alpha', 0.2)
+        self.mixup_prob = config_dict['train_cfg'].get('mixup_prob', 0.5)
+        self.mixup_type = config_dict['train_cfg'].get('mixup_type', 'sequence')  # 'sequence' or 'spatial'
 
         if config_dict['dataset_cfg']['docker']:
             docker_path = "/home/datasets/"
@@ -102,8 +108,6 @@ class ROD2021Dataset(data.Dataset):
                 for list_chirps in data_details['radar_paths']:
                     new_paths.append([new_path.replace(old_base_root, docker_path) for new_path in list_chirps])
                 self.radar_paths.append(new_paths)
-
-
 
             n_data_in_seq = (n_frame - (self.win_size * self.step - 1)) // self.stride + (
                 1 if (n_frame - (self.win_size * self.step - 1)) % self.stride > 0 else 0)
@@ -188,6 +192,7 @@ class ROD2021Dataset(data.Dataset):
             return data_dict
 
         data_dict['radar_data'] = radar_npy_win
+
         # Load annotations
         if len(self.confmaps) != 0:
             confmap_gt = this_seq_confmap[data_id:data_id + self.win_size * self.step:self.step]
@@ -204,19 +209,52 @@ class ROD2021Dataset(data.Dataset):
         else:
             data_dict['anno'] = None
 
+        # Apply MixUp augmentation (only during training)
+        if self.split == "train" and self.use_mixup and data_dict['anno'] is not None:
+            if random.random() < self.mixup_prob:
+                # Randomly select another sample for mixing
+                mix_index = random.randint(0, self.__len__() - 1)
+                mix_data = self.__getitem__(mix_index)
+
+                if mix_data['status'] and mix_data['anno'] is not None:
+                    if self.mixup_type == 'sequence':
+                        # Sequence-level MixUp
+                        mixed_radar, mixed_confmap, lam = sequence_mixup(
+                            data_dict['radar_data'],
+                            data_dict['anno']['confmaps'],
+                            mix_data['radar_data'],
+                            mix_data['anno']['confmaps'],
+                            alpha=self.mixup_alpha
+                        )
+                    elif self.mixup_type == 'spatial':
+                        # Spatial MixUp
+                        mixed_radar, mixed_confmap = spatial_mixup(
+                            data_dict['radar_data'],
+                            data_dict['anno']['confmaps'],
+                            mix_data['radar_data'],
+                            mix_data['anno']['confmaps']
+                        )
+                    else:
+                        raise ValueError(f"Unknown mixup_type: {self.mixup_type}")
+
+                    data_dict['radar_data'] = mixed_radar
+                    data_dict['anno']['confmaps'] = mixed_confmap
+
         if self.split == "train":
-            # Data augmentation
-            data_dict['radar_data'], data_dict['anno']['confmaps'], image_paths = random_apply(data_dict['radar_data'],
-                                                                                               data_dict['anno'][
-                                                                                                   'confmaps'],
-                                                                                               image_paths,
-                                                                                               self.aug_dict)
+            # Data augmentation (other augmentations)
+            data_dict['radar_data'], data_dict['anno']['confmaps'], image_paths = random_apply(
+                data_dict['radar_data'],
+                data_dict['anno']['confmaps'],
+                image_paths,
+                self.aug_dict
+            )
 
         # Normalize data
         if self.normalize:
             mean_data = self.mean_data.tile(self.n_chirps)
             std_data = self.std_data.tile(self.n_chirps)
-            data_dict['radar_data'] = (data_dict['radar_data'] - mean_data[:, None, None, None]) / std_data[:, None, None, None]
+            data_dict['radar_data'] = (data_dict['radar_data'] - mean_data[:, None, None, None]) / std_data[:, None,
+                                                                                                   None, None]
 
         if not self.all_confmaps and data_dict['anno'] is not None:
             data_dict['anno']['confmaps'] = data_dict['anno']['confmaps'][:, -1]

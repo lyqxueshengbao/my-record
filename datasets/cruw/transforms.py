@@ -1,6 +1,6 @@
 from torch.nn import functional as F
-from torch import nn 
-import torch 
+from torch import nn
+import torch
 import numpy as np
 import random
 
@@ -50,6 +50,60 @@ def noise(radar, gt, sigma):
     return radar, gt
 
 
+def sequence_mixup(radar1, confmap1, radar2, confmap2, alpha=0.2):
+    """
+    Apply MixUp augmentation on sequence-level radar data and confidence maps
+    保持时序完整性的序列级混合
+
+    @param radar1: first radar sequence [C, T, H, W]
+    @param confmap1: first confidence map [n_class, T, H, W] or [n_class, H, W]
+    @param radar2: second radar sequence [C, T, H, W]
+    @param confmap2: second confidence map [n_class, T, H, W] or [n_class, H, W]
+    @param alpha: Beta distribution parameter for mixup ratio
+    @return: mixed radar data, mixed confidence maps, and lambda value
+    """
+    # Sample mixing ratio from Beta distribution
+    if alpha > 0:
+        lam = np.random.beta(alpha, alpha)
+    else:
+        lam = 1.0
+
+    # Mix radar sequences (element-wise)
+    mixed_radar = lam * radar1 + (1 - lam) * radar2
+
+    # Mix confidence maps (element-wise)
+    mixed_confmap = lam * confmap1 + (1 - lam) * confmap2
+
+    return mixed_radar, mixed_confmap, lam
+
+
+def spatial_mixup(radar1, confmap1, radar2, confmap2):
+    """
+    Apply spatial MixUp on radar data (alternative safer approach)
+    在距离维度上进行空间区域混合
+
+    @param radar1: first radar sequence [C, T, H, W]
+    @param confmap1: first confidence map [n_class, T, H, W] or [n_class, H, W]
+    @param radar2: second radar sequence [C, T, H, W]
+    @param confmap2: second confidence map [n_class, T, H, W] or [n_class, H, W]
+    @return: spatially mixed radar data and confidence maps
+    """
+    _, _, h, w = radar1.shape
+
+    # Randomly select cut position in range dimension (width)
+    cut_w = np.random.randint(w // 4, 3 * w // 4)
+
+    # Clone to avoid in-place modification
+    mixed_radar = radar1.clone()
+    mixed_confmap = confmap1.clone()
+
+    # Mix spatial regions
+    mixed_radar[..., cut_w:] = radar2[..., cut_w:]
+    mixed_confmap[..., cut_w:] = confmap2[..., cut_w:]
+
+    return mixed_radar, mixed_confmap
+
+
 def random_apply(radar, gt, image_paths, aug_dict=None):
     """
     Randomly apply data augmentation operation on input radar frames and ground truth
@@ -61,8 +115,8 @@ def random_apply(radar, gt, image_paths, aug_dict=None):
     """
     if aug_dict is None:
         aug_dict = {'mirror': 0.5,
-                       'reverse': 0.5
-                       }
+                    'reverse': 0.5
+                    }
 
     augmentation_func = []
     for key in aug_dict.keys():
@@ -70,7 +124,7 @@ def random_apply(radar, gt, image_paths, aug_dict=None):
         prob_key = aug_dict[key]
         if prob_key > random_val:
             augmentation_func.append(key)
-    
+
     for augmentation_technique in augmentation_func:
         if augmentation_technique == 'mirror':
             random_val = random.randint(-1, 1)
@@ -85,10 +139,9 @@ def random_apply(radar, gt, image_paths, aug_dict=None):
         if augmentation_technique == 'gaussian':
             sigma = np.random.uniform(0, 0.03)
             radar, gt = noise(radar, gt, sigma)
-            
+
         if augmentation_technique == 'reverse':
             radar, gt = reverse(radar, gt)
             image_paths.reverse()
-            
-    return radar, gt, image_paths
 
+    return radar, gt, image_paths

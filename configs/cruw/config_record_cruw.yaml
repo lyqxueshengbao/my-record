@@ -97,7 +97,7 @@ confmap_cfg:
     cyclist: 2
     car: 3
 train_cfg:
-  ckpt_dir: logs/rod2021
+  ckpt_dir: logs/rod2021_mixup
   n_epoch: 100
   batch_size: 10
   accumulate_grad: 1
@@ -114,10 +114,21 @@ train_cfg:
   train_log_step: 1000
   val_log_step: 100
   test_log_step: 200
+
+  # ====== MixUp Data Augmentation Configuration ======
+  # 序列级别的MixUp增强，保持时序一致性
+  use_mixup: true              # 启用MixUp增强
+  mixup_alpha: 0.1             # Beta分布参数 (推荐从0.1开始，保守策略)
+  mixup_prob: 0.3              # MixUp应用概率 (30%的训练样本会被混合)
+  mixup_type: 'sequence'       # 混合类型: 'sequence' (时序混合) 或 'spatial' (空间混合)
+  # ===================================================
+
+  # 传统数据增强（MixUp会在这些增强之前应用）
   aug:
-    mirror: 0.5
-    reverse: 0.5
-    gaussian: 0.0
+    mirror: 0.5                # 水平/垂直翻转概率
+    reverse: 0.5               # 时序反转概率
+    gaussian: 0.0              # 高斯噪声（当前未使用）
+
 test_cfg:
   test_step: 1
   test_stride: 1
