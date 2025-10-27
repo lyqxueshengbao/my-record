@@ -4,7 +4,7 @@ import pytorch_lightning as pl
 from torch import nn
 import torch
 from torch.utils.data import DataLoader
-from utils.loss import SmoothCELoss
+from utils.loss import SmoothCELoss, FocalLoss, SmoothFocalLoss
 from datasets.cruw.collate_functions import cr_collate
 from evaluation.postprocess import post_process_single_frame_cruw, write_dets_results_single_frame
 from cruw.eval import evaluate_rodnet_seq
@@ -23,7 +23,7 @@ class CruwExecutor(pl.LightningModule):
         @param save_dir: directory to save data
         """
         super(CruwExecutor, self).__init__()
-        
+
         self.cruw_dataset_obj = cruw_dataset_obj
         self.config = config_dict
         self.train_cfg = config_dict['train_cfg']
@@ -31,7 +31,7 @@ class CruwExecutor(pl.LightningModule):
         self.model_cfg = config_dict['model_cfg']
         self.n_class = self.cruw_dataset_obj.object_cfg.n_class
         self.batch_size = self.train_cfg['batch_size']
-        self.learning_rate = self.train_cfg['lr'] 
+        self.learning_rate = self.train_cfg['lr']
         self.in_channels = self.model_cfg['in_channels']
         self.win_size = self.train_cfg['win_size']
         self.model_name = self.model_cfg['name']
@@ -55,7 +55,7 @@ class CruwExecutor(pl.LightningModule):
             os.makedirs(self.val_res_dir)
         if not os.path.exists(self.test_res_dir):
             os.makedirs(self.test_res_dir)
-        
+
         # For testing on val set
         self.evalImgs_all = []
         self.n_frames_all = 0
@@ -68,13 +68,24 @@ class CruwExecutor(pl.LightningModule):
         loss_type = self.train_cfg['loss']
         if loss_type == 'bce':
             return nn.BCELoss()
+        elif loss_type == 'focal':
+            # Focal Loss parameters from config or defaults
+            alpha = self.train_cfg.get('focal_alpha', 0.25)
+            gamma = self.train_cfg.get('focal_gamma', 2.0)
+            return FocalLoss(alpha=alpha, gamma=gamma)
+        elif loss_type == 'smooth_focal':
+            # Smooth Focal Loss parameters
+            alpha = self.train_cfg.get('focal_alpha', 0.25)
+            gamma = self.train_cfg.get('focal_gamma', 2.0)
+            alpha_weight = self.train_cfg.get('alpha_loss', 0.5)
+            return SmoothFocalLoss(alpha=alpha, gamma=gamma, alpha_weight=alpha_weight)
         elif loss_type == 'mse':
             return nn.SmoothL1Loss()
         elif loss_type == 'smooth_ce':
             alpha = self.train_cfg['alpha_loss']
             return SmoothCELoss(alpha)
         else:
-            raise ValueError
+            raise ValueError(f"Unknown loss type: {loss_type}")
 
     def train_dataloader(self):
         """
@@ -83,7 +94,7 @@ class CruwExecutor(pl.LightningModule):
         """
         return DataLoader(self.train_dataset, batch_size=self.batch_size, collate_fn=cr_collate,
                           shuffle=True, num_workers=4, drop_last=True)
-    
+
     def val_dataloader(self):
         """
         Define PyTorch validation dataloader
@@ -105,7 +116,7 @@ class CruwExecutor(pl.LightningModule):
         """
         confmap_pred = self.model(x)
         return confmap_pred
-    
+
     def training_step(self, batch, batch_id):
         """
         Perform one training step (forward + backward) on a batch of data.
@@ -133,7 +144,7 @@ class CruwExecutor(pl.LightningModule):
         @param batch_id: id of the current batch
         """
         # Get data
-        ra_maps = batch['radar_data'] # N, H, W, C
+        ra_maps = batch['radar_data']  # N, H, W, C
         confmap_gts = batch['anno']['confmaps']
         image_paths = batch['image_paths']
         obj_infos = batch['anno']['obj_infos']
@@ -162,11 +173,11 @@ class CruwExecutor(pl.LightningModule):
             save_dir = os.path.join(self.val_res_dir)
         else:
             save_dir = os.path.join(self.test_res_dir)
-        
+
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
-        save_path = os.path.join(save_dir, seq_name.upper()+".txt")
-        
+        save_path = os.path.join(save_dir, seq_name.upper() + ".txt")
+
         if confmap_gts is not None:
             start_frame_name = image_paths[0][0].split('/')[-1].split('.')[0]
             frame_name = image_paths[0][-1].split('/')[-1].split('.')[0]
@@ -176,10 +187,10 @@ class CruwExecutor(pl.LightningModule):
             frame_name = image_paths[0][-1][0].split('/')[-1].split('.')[0].split('_')[0]
             frame_id = int(frame_name)
 
-        if frame_id == self.win_size-1 and self.model_name not in ('RECORDNoLstmMulti', 'RECORDNoLstmSingle'):
+        if frame_id == self.win_size - 1 and self.model_name not in ('RECORDNoLstmMulti', 'RECORDNoLstmSingle'):
             for tmp_frame_id in range(frame_id):
                 print("Eval frame", tmp_frame_id)
-                tmp_ra_maps = ra_maps[:, :, :tmp_frame_id+1]
+                tmp_ra_maps = ra_maps[:, :, :tmp_frame_id + 1]
                 confmap_pred = self.forward(tmp_ra_maps)
                 res_final = post_process_single_frame_cruw(confmap_pred[0].cpu(), self.cruw_dataset_obj, self.config)
                 write_dets_results_single_frame(res_final, tmp_frame_id, save_path, self.cruw_dataset_obj)
@@ -196,29 +207,29 @@ class CruwExecutor(pl.LightningModule):
         eval_imgs = evaluate_rodnet_seq(res_path, gt_path, n_frame, self.cruw_dataset_obj)
         out_eval = accumulate(eval_imgs, n_frame, ols_thrs, rec_thrs, self.cruw_dataset_obj, log=False)
         stats = summarize(out_eval, ols_thrs, rec_thrs, self.cruw_dataset_obj, gl=False)
-        
+
         self.n_frames_all += n_frame
         self.evalImgs_all.extend(eval_imgs)
-        
-        self.logger.log_metrics({"AP/"+subset.upper(): stats[0] * 100,
-                   "AR/"+subset.upper(): stats[1] * 100})
-                
+
+        self.logger.log_metrics({"AP/" + subset.upper(): stats[0] * 100,
+                                 "AR/" + subset.upper(): stats[1] * 100})
+
     def evaluate_rodnet_(self):
         ols_thrs = np.around(np.linspace(0.5, 0.9, int(np.round((0.9 - 0.5) / 0.05) + 1), endpoint=True), decimals=2)
         rec_thrs = np.around(np.linspace(0.0, 1.0, int(np.round((1.0 - 0.0) / 0.01) + 1), endpoint=True), decimals=2)
-        out_eval = accumulate(self.evalImgs_all, self.n_frames_all, ols_thrs, rec_thrs, self.cruw_dataset_obj, log=False)
+        out_eval = accumulate(self.evalImgs_all, self.n_frames_all, ols_thrs, rec_thrs, self.cruw_dataset_obj,
+                              log=False)
         stats = summarize(out_eval, ols_thrs, rec_thrs, self.cruw_dataset_obj, gl=False)
         self.logger.log_metrics({"AP/Overall": stats[0] * 100,
-                   "AR/Overall": stats[1] * 100})
+                                 "AR/Overall": stats[1] * 100})
 
         self.logger.log_metrics({"hp/AP": stats[0] * 100,
                                  "hp/AR": stats[1] * 100})
 
-
     def on_before_batch_transfer(self, batch, dataloader_idx):
         if self.model_name == 'RECORDNoLstmMulti':
             b, c, t, h, w = batch['radar_data'].shape
-            batch['radar_data'] = batch['radar_data'].reshape(b, c*t, h, w)
+            batch['radar_data'] = batch['radar_data'].reshape(b, c * t, h, w)
             return batch
         elif self.model_name == 'RECORDNoLstmSingle':
             b, c, t, h, w = batch['radar_data'].shape
@@ -227,7 +238,7 @@ class CruwExecutor(pl.LightningModule):
             return batch
         else:
             return batch
-        
+
     def configure_optimizers(self):
         opti = self.train_cfg['optimizer']
         scheduler = self.train_cfg['scheduler']
@@ -240,7 +251,7 @@ class CruwExecutor(pl.LightningModule):
             optimizer = torch.optim.SGD(self.parameters(), lr=self.learning_rate, momentum=0.9)
         elif opti == 'adamw':
             optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=0.0001)
-        else: 
+        else:
             raise ValueError
 
         if scheduler == 'exp':
@@ -257,5 +268,4 @@ class CruwExecutor(pl.LightningModule):
         else:
             raise ValueError
         return [optimizer], [lr_scheduler]
-
 

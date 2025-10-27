@@ -104,7 +104,12 @@ train_cfg:
   lr: 0.001
   optimizer: adam
   scheduler: exp
-  loss: bce
+  # 损失函数选择: 'bce', 'focal', 'smooth_focal', 'mse', 'smooth_ce'
+  loss: focal  # 改为使用 Focal Loss
+  # Focal Loss 参数
+  focal_alpha: 0.25  # 平衡正负样本权重 (default: 0.25)
+  focal_gamma: 2.0   # 聚焦参数，降低易分类样本的权重 (default: 2.0)
+  # 如果使用 smooth_focal 或 smooth_ce，alpha_loss 控制两种损失的混合比例
   alpha_loss: 0.5
   win_size: 12
   train_step: 1

@@ -24,6 +24,83 @@ class SmoothCELoss(nn.Module):
                 (1-self.alpha) * self.smooth_l1(input, target)
 
 
+class FocalLoss(nn.Module):
+    """
+    Focal Loss for addressing class imbalance
+    FL = -alpha * (1-pt)^gamma * log(pt)
+
+    Parameters:
+    -----------
+    alpha : float or list of floats
+        Weighting factor in range (0,1) to balance positive/negative examples
+        or a list of weights for each class. Default: 0.25
+    gamma : float
+        Exponent of the modulating factor (1 - p_t)^gamma. Default: 2.0
+    reduction : str
+        Specifies the reduction to apply to the output: 'none' | 'mean' | 'sum'
+        Default: 'mean'
+    """
+    def __init__(self, alpha=0.25, gamma=2.0, reduction='mean'):
+        super(FocalLoss, self).__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
+
+    def forward(self, inputs, targets):
+        """
+        Args:
+            inputs: A float tensor of arbitrary shape.
+                    The predictions for each example.
+            targets: A float tensor with the same shape as inputs.
+                     Stores the binary classification label for each element in inputs
+                     (0 for the negative class and 1 for the positive class).
+        """
+        # Ensure inputs are in valid range [0, 1] for BCE calculation
+        inputs = torch.clamp(inputs, min=1e-7, max=1-1e-7)
+
+        # Calculate BCE loss
+        bce_loss = F.binary_cross_entropy(inputs, targets, reduction='none')
+
+        # Calculate pt (probability of the true class)
+        pt = torch.exp(-bce_loss)
+
+        # Calculate focal loss
+        focal_loss = self.alpha * (1 - pt) ** self.gamma * bce_loss
+
+        # Apply reduction
+        if self.reduction == 'mean':
+            return focal_loss.mean()
+        elif self.reduction == 'sum':
+            return focal_loss.sum()
+        else:
+            return focal_loss
+
+
+class SmoothFocalLoss(nn.Module):
+    """
+    Smooth Focal Loss: Combination of Focal Loss and Smooth L1 Loss
+    SFL = alpha_weight * FocalLoss() + (1-alpha_weight) * SmoothL1Loss()
+
+    Parameters:
+    -----------
+    alpha : float
+        Weighting factor for focal loss (default: 0.25)
+    gamma : float
+        Focusing parameter for focal loss (default: 2.0)
+    alpha_weight : float
+        Weight to balance between focal loss and smooth l1 loss (default: 0.5)
+    """
+    def __init__(self, alpha=0.25, gamma=2.0, alpha_weight=0.5):
+        super(SmoothFocalLoss, self).__init__()
+        self.focal = FocalLoss(alpha=alpha, gamma=gamma, reduction='mean')
+        self.smooth_l1 = nn.SmoothL1Loss()
+        self.alpha_weight = alpha_weight
+
+    def forward(self, input, target):
+        return self.alpha_weight * self.focal(input, target) + \
+                (1-self.alpha_weight) * self.smooth_l1(input, target)
+
+
 def one_hot(labels: torch.Tensor,
             num_classes: int,
             device: Optional[torch.device] = None,
