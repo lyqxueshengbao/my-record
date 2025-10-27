@@ -80,7 +80,7 @@ model_cfg:
   # CBAM Attention Module Configuration
   use_cbam: true                # Enable/disable CBAM attention
   cbam_reduction: 32            # Channel reduction ratio for CBAM 可调整：8, 16, 32
-  cbam_kernel_size: 1           # Kernel size for spatial attention (3 or 7) 可选：3 或 7
+  cbam_kernel_size: 3           # Kernel size for spatial attention (3 or 7) 可选：3 或 7
 #  # 方案1：轻量级 CBAM
 #  use_cbam: true
 #  cbam_reduction: 32      # 更大的压缩比，参数更少
