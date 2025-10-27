@@ -77,6 +77,22 @@ model_cfg:
   max_dets: 20
   peak_thres: 0.3
   ols_thres: 0.3
+  # CBAM Attention Module Configuration
+  use_cbam: true                # Enable/disable CBAM attention
+  cbam_reduction: 16            # Channel reduction ratio for CBAM 可调整：8, 16, 32
+  cbam_kernel_size: 7           # Kernel size for spatial attention (3 or 7) 可选：3 或 7
+#  # 方案1：轻量级 CBAM
+#  use_cbam: true
+#  cbam_reduction: 32      # 更大的压缩比，参数更少
+#  cbam_kernel_size: 3     # 更小的卷积核
+#  # 方案2：标准 CBAM
+#  use_cbam: true
+#  cbam_reduction: 16
+#  cbam_kernel_size: 7
+#  # 方案3：强注意力 CBAM
+#  use_cbam: true
+#  cbam_reduction: 8       # 更小的压缩比，注意力更精细
+#  cbam_kernel_size: 7
 confmap_cfg:
   confmap_sigmas:
     pedestrian: 15

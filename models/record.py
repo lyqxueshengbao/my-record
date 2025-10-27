@@ -6,7 +6,17 @@ from .layers.inverted_residual import Conv3x3ReLUNorm, InvertedResidual
 from .layers.bottleneck_lstm import BottleneckLSTM
 from utils.models_utils import _make_divisible
 
-def build_model(model_config, alpha=1.0, norm_type='layer'):
+
+def build_model(model_config, alpha=1.0, norm_type='layer', use_cbam=False, cbam_reduction=16, cbam_kernel_size=7):
+    """
+    Build model layers from configuration
+    @param model_config: model configuration dictionary
+    @param alpha: width multiplier
+    @param norm_type: normalization type
+    @param use_cbam: whether to use CBAM attention
+    @param cbam_reduction: CBAM channel reduction ratio
+    @param cbam_kernel_size: CBAM spatial kernel size
+    """
     layers = []
     for layer_name in model_config:
         layer = model_config[layer_name]
@@ -15,17 +25,21 @@ def build_model(model_config, alpha=1.0, norm_type='layer'):
         # If addition (for skip connections), then evaluate expression
         if isinstance(in_channels, str):
             in_channels = eval(in_channels)
-        in_channels = _make_divisible(in_channels*alpha, 8.0)
+        in_channels = _make_divisible(in_channels * alpha, 8.0)
         out_channels = layer['out_channels']
         # If addition (for skip connection), then evaluate expression
         if isinstance(out_channels, str):
             out_channels = eval(out_channels)
-        out_channels = _make_divisible(out_channels*alpha, 8.0)
+        out_channels = _make_divisible(out_channels * alpha, 8.0)
         stride = layer['stride']
         if layer['use_norm']:
             norm = norm_type
         else:
             norm = None
+
+        # Check if CBAM should be used for this layer
+        layer_use_cbam = use_cbam and layer.get('use_cbam', True)
+
         print('Build layer {}...'.format(layer_name))
         if layer_type == 'conv':
             layers.append(Conv3x3ReLUNorm(in_channels=in_channels, out_channels=out_channels, stride=stride, norm=norm))
@@ -37,11 +51,19 @@ def build_model(model_config, alpha=1.0, norm_type='layer'):
         elif layer_type == 'inverted_residual':
             expansion_factor = layer['expansion_factor']
             num_block = layer['num_block']
-            layers.append(InvertedResidual(in_channels=in_channels, out_channels=out_channels, expansion_factor=expansion_factor,
-                                           stride=stride, norm=norm))
+            layers.append(InvertedResidual(in_channels=in_channels, out_channels=out_channels,
+                                           expansion_factor=expansion_factor,
+                                           stride=stride, norm=norm,
+                                           use_cbam=layer_use_cbam,
+                                           cbam_reduction=cbam_reduction,
+                                           cbam_kernel_size=cbam_kernel_size))
             for i in range(1, num_block):
-                layers.append(InvertedResidual(in_channels=out_channels, out_channels=out_channels, expansion_factor=expansion_factor,
-                                           stride=stride, norm=norm))
+                layers.append(InvertedResidual(in_channels=out_channels, out_channels=out_channels,
+                                               expansion_factor=expansion_factor,
+                                               stride=stride, norm=norm,
+                                               use_cbam=layer_use_cbam,
+                                               cbam_reduction=cbam_reduction,
+                                               cbam_kernel_size=cbam_kernel_size))
         elif layer_type == 'bottleneck_lstm':
             num_block = layer['num_block']
             layers.append(BottleneckLSTM(input_channels=in_channels, hidden_channels=out_channels, norm=norm))
@@ -51,25 +73,30 @@ def build_model(model_config, alpha=1.0, norm_type='layer'):
             kernel_size = layer['kernel_size']
             padding = layer['padding']
             output_padding = layer['output_padding']
-            layers.append(nn.ConvTranspose2d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size,
-                                             padding=padding, output_padding=output_padding, stride=stride))
+            layers.append(
+                nn.ConvTranspose2d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size,
+                                   padding=padding, output_padding=output_padding, stride=stride))
 
     return layers
 
 
 class Record(nn.Module):
-    def __init__(self, config, in_channels=8, norm='layer', n_class=3):
+    def __init__(self, config, in_channels=8, norm='layer', n_class=3,
+                 use_cbam=False, cbam_reduction=16, cbam_kernel_size=7):
         """
-        RECurrent Online object detectOR (RECORD) model class
+        RECurrent Online object detectOR (RECORD) model class with optional CBAM attention
         @param config: configuration file of the model
-        @param alpha: expansion factor to modify the size of the model (default: 1.0)
         @param in_channels: number of input channels (default: 8)
-        @param norm: type of normalisation (default: LayerNorm). Other normalisation are not supported yet.
+        @param norm: type of normalisation (default: LayerNorm)
         @param n_class: number of classes (default: 3)
-        @param shallow: load a shallow version of RECORD (fewer channels in the decoder)
+        @param use_cbam: whether to use CBAM attention module (default: False)
+        @param cbam_reduction: CBAM channel reduction ratio (default: 16)
+        @param cbam_kernel_size: CBAM spatial kernel size (default: 7)
         """
         super(Record, self).__init__()
-        self.encoder = RecordEncoder(config=config['encoder_config'], in_channels=in_channels, norm=norm)
+        self.encoder = RecordEncoder(config=config['encoder_config'], in_channels=in_channels, norm=norm,
+                                      use_cbam=use_cbam, cbam_reduction=cbam_reduction,
+                                      cbam_kernel_size=cbam_kernel_size)
         self.decoder = RecordDecoder(config=config['decoder_config'], n_class=n_class)
         self.sigmoid = nn.Sigmoid()
 
@@ -92,19 +119,22 @@ class Record(nn.Module):
 
 
 class RecordEncoder(nn.Module):
-    def __init__(self, in_channels, config, norm='layer'):
+    def __init__(self, in_channels, config, norm='layer',
+                 use_cbam=False, cbam_reduction=16, cbam_kernel_size=7):
         """
-        RECurrent Online object detectOR (RECORD) features extractor.
+        RECurrent Online object detectOR (RECORD) features extractor with optional CBAM.
         @param in_channels: number of input channels (default: 8)
         @param config: number of input channels per block
-        @param norm: type of normalisation (default: LayerNorm). Other normalisation are not supported yet.
+        @param norm: type of normalisation (default: LayerNorm)
+        @param use_cbam: whether to use CBAM attention
+        @param cbam_reduction: CBAM reduction ratio
+        @param cbam_kernel_size: CBAM spatial kernel size
         """
         super(RecordEncoder, self).__init__()
         self.norm = norm
+        self.use_cbam = use_cbam
         # Set the number of input channels in the configuration file
         config['in_conv']['in_channels'] = in_channels
-
-        # config_tmp = **config['in_conv'] --> dict with arguments
 
         # Input convolution (expands the number of input channels)
         self.in_conv = Conv3x3ReLUNorm(in_channels=config['in_conv']['in_channels'],
@@ -116,14 +146,20 @@ class RecordEncoder(nn.Module):
                                              out_channels=config['ir_block1']['out_channels'],
                                              num_block=config['ir_block1']['num_block'],
                                              expansion_factor=config['ir_block1']['expansion_factor'],
-                                             stride=config['ir_block1']['stride'], use_norm=config['ir_block1']['use_norm'])
+                                             stride=config['ir_block1']['stride'],
+                                             use_norm=config['ir_block1']['use_norm'],
+                                             use_cbam=use_cbam, cbam_reduction=cbam_reduction,
+                                             cbam_kernel_size=cbam_kernel_size)
 
         # IR block 2 (extracts spatial features and decrease spatial dimension by a factor of 2)
         self.ir_block2 = self._make_ir_block(in_channels=config['ir_block2']['in_channels'],
                                              out_channels=config['ir_block2']['out_channels'],
                                              num_block=config['ir_block2']['num_block'],
                                              expansion_factor=config['ir_block2']['expansion_factor'],
-                                             stride=config['ir_block2']['stride'], use_norm=config['ir_block2']['use_norm'])
+                                             stride=config['ir_block2']['stride'],
+                                             use_norm=config['ir_block2']['use_norm'],
+                                             use_cbam=use_cbam, cbam_reduction=cbam_reduction,
+                                             cbam_kernel_size=cbam_kernel_size)
 
         # Bottleneck LSTM 1 (extract spatial and temporal features)
         lstm_norm = None if not config['bottleneck_lstm1']['use_norm'] else self.norm
@@ -136,7 +172,10 @@ class RecordEncoder(nn.Module):
                                              out_channels=config['ir_block3']['out_channels'],
                                              num_block=config['ir_block3']['num_block'],
                                              expansion_factor=config['ir_block3']['expansion_factor'],
-                                             stride=config['ir_block3']['stride'], use_norm=config['ir_block3']['use_norm'])
+                                             stride=config['ir_block3']['stride'],
+                                             use_norm=config['ir_block3']['use_norm'],
+                                             use_cbam=use_cbam, cbam_reduction=cbam_reduction,
+                                             cbam_kernel_size=cbam_kernel_size)
 
         # Bottleneck LSTM 2 (extract spatial and temporal features)
         lstm_norm = None if not config['bottleneck_lstm2']['use_norm'] else self.norm
@@ -149,8 +188,10 @@ class RecordEncoder(nn.Module):
                                              out_channels=config['ir_block4']['out_channels'],
                                              num_block=config['ir_block4']['num_block'],
                                              expansion_factor=config['ir_block4']['expansion_factor'],
-                                             stride=config['ir_block4']['stride'], use_norm=config['ir_block4']['use_norm'])
-
+                                             stride=config['ir_block4']['stride'],
+                                             use_norm=config['ir_block4']['use_norm'],
+                                             use_cbam=use_cbam, cbam_reduction=cbam_reduction,
+                                             cbam_kernel_size=cbam_kernel_size)
 
     def forward(self, x):
         """
@@ -174,14 +215,19 @@ class RecordEncoder(nn.Module):
 
         return st_features_backbone, st_features_lstm2, st_features_lstm1
 
-    def _make_ir_block(self, in_channels, out_channels, num_block, expansion_factor, stride, use_norm):
+    def _make_ir_block(self, in_channels, out_channels, num_block, expansion_factor, stride, use_norm,
+                       use_cbam=False, cbam_reduction=16, cbam_kernel_size=7):
         """
-        Build an Inverted Residual bottleneck block
+        Build an Inverted Residual bottleneck block with optional CBAM attention
         @param in_channels: number of input channels
         @param out_channels: number of output channels
         @param num_block: number of IR layer in the block
         @param expansion_factor: expansion factor of each IR layer
         @param stride: stride of the first convolution
+        @param use_norm: whether to use normalization
+        @param use_cbam: whether to use CBAM attention
+        @param cbam_reduction: CBAM reduction ratio
+        @param cbam_kernel_size: CBAM spatial kernel size
         @return a torch.nn.Sequential layer
         """
         if use_norm:
@@ -189,10 +235,14 @@ class RecordEncoder(nn.Module):
         else:
             norm = None
         layers = [InvertedResidual(in_channels=in_channels, out_channels=out_channels, stride=stride,
-                                   expansion_factor=expansion_factor, norm=norm)]
+                                   expansion_factor=expansion_factor, norm=norm,
+                                   use_cbam=use_cbam, cbam_reduction=cbam_reduction,
+                                   cbam_kernel_size=cbam_kernel_size)]
         for i in range(1, num_block):
             layers.append(InvertedResidual(in_channels=out_channels, out_channels=out_channels, stride=1,
-                                           expansion_factor=expansion_factor,  norm=norm))
+                                           expansion_factor=expansion_factor, norm=norm,
+                                           use_cbam=use_cbam, cbam_reduction=cbam_reduction,
+                                           cbam_kernel_size=cbam_kernel_size))
         return nn.Sequential(*layers)
 
     def __init_hidden__(self):
@@ -202,6 +252,7 @@ class RecordEncoder(nn.Module):
         # List of 2 hidden/cell states as we use 2 Bottleneck LSTM. The initialisation is done inside a Bottleneck LSTM cell.
         self.h_list = [None, None]
         self.c_list = [None, None]
+
 
 
 class RecordDecoder(nn.Module):

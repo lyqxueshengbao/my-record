@@ -1,5 +1,5 @@
 from typing import Any, Callable, Dict, Optional, Tuple, TypeVar, Union
-import yaml 
+import yaml
 
 
 def get_models(config):
@@ -9,32 +9,74 @@ def get_models(config):
     @return: model
     """
     name = config['name']
+
+    # Extract CBAM parameters from config (with defaults)
+    use_cbam = config.get('use_cbam', False)
+    cbam_reduction = config.get('cbam_reduction', 16)
+    cbam_kernel_size = config.get('cbam_kernel_size', 7)
+
+    # Load backbone configuration
+    backbone_cfg = yaml.load(open(config['backbone_pth']), yaml.FullLoader)
+
     if name in ('RECORD', 'RECORD-RD', 'RECORD-RA'):
         from models import Record
-        backbone_cfg = yaml.load(open(config['backbone_pth']), yaml.FullLoader)
-        model = Record(config=backbone_cfg, in_channels=config['in_channels'], norm=config['norm'],
-                       n_class=config['nb_classes'])
+        model = Record(
+            config=backbone_cfg,
+            in_channels=config['in_channels'],
+            norm=config['norm'],
+            n_class=config['nb_classes'],
+            use_cbam=use_cbam,
+            cbam_reduction=cbam_reduction,
+            cbam_kernel_size=cbam_kernel_size
+        )
     elif name in ('RECORD-OI', 'RECORD-RD-OI', 'RECORD-RA-OI'):
         from models import RecordOI
-        backbone_cfg = yaml.load(open(config['backbone_pth']), yaml.FullLoader)
-        model = RecordOI(config=backbone_cfg, in_channels=config['in_channels'], norm=config['norm'],
-                       n_class=config['nb_classes'])
+        model = RecordOI(
+            config=backbone_cfg,
+            in_channels=config['in_channels'],
+            norm=config['norm'],
+            n_class=config['nb_classes'],
+            use_cbam=use_cbam,
+            cbam_reduction=cbam_reduction,
+            cbam_kernel_size=cbam_kernel_size
+        )
     elif name == 'MV-RECORD':
         from models import MVRecord
-        backbone_cfg = yaml.load(open(config['backbone_pth']), yaml.FullLoader)
-        model = MVRecord(config=backbone_cfg, n_classes=config['nb_classes'], n_frames=config['win_size'],
-                                  in_channels=config['in_channels'], norm=config['norm'])
+        model = MVRecord(
+            config=backbone_cfg,
+            n_classes=config['nb_classes'],
+            n_frames=config['win_size'],
+            in_channels=config['in_channels'],
+            norm=config['norm'],
+            use_cbam=use_cbam,
+            cbam_reduction=cbam_reduction,
+            cbam_kernel_size=cbam_kernel_size
+        )
     elif name == 'MV-RECORD-OI':
         from models import MVRecordOI
-        backbone_cfg = yaml.load(open(config['backbone_pth']), yaml.FullLoader)
-        model = MVRecordOI(config=backbone_cfg, n_classes=config['nb_classes'], n_frames=config['win_size'],
-                         in_channels=config['in_channels'], norm=config['norm'])
+        model = MVRecordOI(
+            config=backbone_cfg,
+            n_classes=config['nb_classes'],
+            n_frames=config['win_size'],
+            in_channels=config['in_channels'],
+            norm=config['norm'],
+            use_cbam=use_cbam,
+            cbam_reduction=cbam_reduction,
+            cbam_kernel_size=cbam_kernel_size
+        )
     elif name in ('RECORDNoLstmMulti', 'RECORDNoLstmSingle'):
         from models import RecordNoLstm
-        backbone_cfg = yaml.load(open(config['backbone_pth']), yaml.FullLoader)
-        model = RecordNoLstm(backbone_cfg, config['in_channels'], config['nb_classes'])
+        model = RecordNoLstm(
+            backbone_cfg,
+            config['in_channels'],
+            config['nb_classes'],
+            use_cbam=use_cbam,
+            cbam_reduction=cbam_reduction,
+            cbam_kernel_size=cbam_kernel_size
+        )
     else:
-        raise ValueError
+        raise ValueError(f"Unknown model name: {name}")
+
     return model
 
 
