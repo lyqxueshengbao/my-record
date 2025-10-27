@@ -97,7 +97,7 @@ confmap_cfg:
     cyclist: 2
     car: 3
 train_cfg:
-  ckpt_dir: logs/rod2021
+  ckpt_dir: logs/rod2021_cbam
   n_epoch: 100
   batch_size: 10
   accumulate_grad: 1
