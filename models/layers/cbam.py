@@ -48,7 +48,7 @@ class SpatialAttention(nn.Module):
         @param kernel_size: kernel size for the convolutional layer (default: 7)
         """
         super(SpatialAttention, self).__init__()
-        assert kernel_size in (3, 7), 'kernel size must be 3 or 7'
+        assert kernel_size in (1, 3, 7), 'kernel size must be 3 or 7'
         padding = 3 if kernel_size == 7 else 1
 
         self.conv = nn.Conv2d(2, 1, kernel_size, padding=padding, bias=False)
