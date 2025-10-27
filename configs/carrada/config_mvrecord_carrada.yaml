@@ -18,7 +18,7 @@ model_cfg:
   width_mult: 1.0
   norm: layer
 train_cfg:
-  ckpt_dir: logs/carrada
+  ckpt_dir: logs/rod2021_focaloss
   n_epoch: 500
   batch_size: 3
   accumulate_grad: 1
