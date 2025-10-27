@@ -37,6 +37,9 @@ class ChannelAttention(nn.Module):
         return self.sigmoid(out)
 
 
+import torch
+import torch.nn as nn
+
 class SpatialAttention(nn.Module):
     """
     Spatial Attention Module
@@ -48,8 +51,11 @@ class SpatialAttention(nn.Module):
         @param kernel_size: kernel size for the convolutional layer (default: 7)
         """
         super(SpatialAttention, self).__init__()
-        assert kernel_size in (1, 3, 7), 'kernel size must be 3 or 7'
-        padding = 3 if kernel_size == 7 else 1
+        # 断言 kernel_size 必须是奇数，以保证 padding 计算正确
+        assert kernel_size % 2 == 1, 'kernel size must be an odd number'
+
+        # 使用通用公式计算 padding，这样无论 kernel_size 是 1, 3, 7 都能正确工作
+        padding = (kernel_size - 1) // 2
 
         self.conv = nn.Conv2d(2, 1, kernel_size, padding=padding, bias=False)
         self.sigmoid = nn.Sigmoid()
@@ -64,6 +70,8 @@ class SpatialAttention(nn.Module):
         out = torch.cat([avg_out, max_out], dim=1)
         out = self.conv(out)
         return self.sigmoid(out)
+
+
 
 
 class CBAM(nn.Module):
