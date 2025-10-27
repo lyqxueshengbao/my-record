@@ -67,7 +67,7 @@ dataset_cfg:
   std_ampl: 0.08244549426031758
 model_cfg:
   name: RECORD
-#  backbone_pth: /home/liyuqin/projects/record//models/configs/record_cruw.yaml
+  backbone_pth: /home/liyuqin/projects/record//models/configs/record_cruw.yaml
   width_mult: 1.0
   sensor_config: sensor_config_rod2021
   in_channels: 8

@@ -128,20 +128,18 @@ class RecordEncoder(nn.Module):
         @param norm: type of normalisation (default: LayerNorm)
         @param use_cbam: whether to use CBAM attention
         @param cbam_reduction: CBAM reduction ratio
-        @param cbam_kernel_size: CBAM spatial kernel size
+        @param cbam_kernel_size: CBAM spatial kernel size (for early layers)
         """
         super(RecordEncoder, self).__init__()
         self.norm = norm
         self.use_cbam = use_cbam
         # Set the number of input channels in the configuration file
         config['in_conv']['in_channels'] = in_channels
-
         # Input convolution (expands the number of input channels)
         self.in_conv = Conv3x3ReLUNorm(in_channels=config['in_conv']['in_channels'],
                                        out_channels=config['in_conv']['out_channels'],
                                        stride=config['in_conv']['stride'], norm=norm)
-
-        # IR block 1 (acts as a bottleneck)
+        # IR block 1: 特征图大，使用配置文件中指定的 kernel_size（如 7 或 3）
         self.ir_block1 = self._make_ir_block(in_channels=config['ir_block1']['in_channels'],
                                              out_channels=config['ir_block1']['out_channels'],
                                              num_block=config['ir_block1']['num_block'],
@@ -149,9 +147,8 @@ class RecordEncoder(nn.Module):
                                              stride=config['ir_block1']['stride'],
                                              use_norm=config['ir_block1']['use_norm'],
                                              use_cbam=use_cbam, cbam_reduction=cbam_reduction,
-                                             cbam_kernel_size=cbam_kernel_size)
-
-        # IR block 2 (extracts spatial features and decrease spatial dimension by a factor of 2)
+                                             cbam_kernel_size=cbam_kernel_size)  # 使用原始 kernel_size
+        # IR block 2: 特征图仍然较大，使用配置的 kernel_size
         self.ir_block2 = self._make_ir_block(in_channels=config['ir_block2']['in_channels'],
                                              out_channels=config['ir_block2']['out_channels'],
                                              num_block=config['ir_block2']['num_block'],
@@ -159,15 +156,15 @@ class RecordEncoder(nn.Module):
                                              stride=config['ir_block2']['stride'],
                                              use_norm=config['ir_block2']['use_norm'],
                                              use_cbam=use_cbam, cbam_reduction=cbam_reduction,
-                                             cbam_kernel_size=cbam_kernel_size)
-
+                                             cbam_kernel_size=cbam_kernel_size)  # 使用原始 kernel_size
         # Bottleneck LSTM 1 (extract spatial and temporal features)
         lstm_norm = None if not config['bottleneck_lstm1']['use_norm'] else self.norm
         self.bottleneck_lstm1 = BottleneckLSTM(input_channels=config['bottleneck_lstm1']['in_channels'],
                                                hidden_channels=config['bottleneck_lstm1']['out_channels'],
                                                norm=lstm_norm)
-
-        # IR block 3 (extracts spatial features and decrease spatial dimension by a factor of 2)
+        # IR block 3: 特征图缩小，使用较小的 kernel_size
+        # 自适应：如果 kernel_size > 3，则降为 3
+        adaptive_kernel_size_3 = min(cbam_kernel_size, 3)
         self.ir_block3 = self._make_ir_block(in_channels=config['ir_block3']['in_channels'],
                                              out_channels=config['ir_block3']['out_channels'],
                                              num_block=config['ir_block3']['num_block'],
@@ -175,15 +172,14 @@ class RecordEncoder(nn.Module):
                                              stride=config['ir_block3']['stride'],
                                              use_norm=config['ir_block3']['use_norm'],
                                              use_cbam=use_cbam, cbam_reduction=cbam_reduction,
-                                             cbam_kernel_size=cbam_kernel_size)
-
+                                             cbam_kernel_size=adaptive_kernel_size_3)  # 最大为 3
         # Bottleneck LSTM 2 (extract spatial and temporal features)
         lstm_norm = None if not config['bottleneck_lstm2']['use_norm'] else self.norm
         self.bottleneck_lstm2 = BottleneckLSTM(input_channels=config['bottleneck_lstm2']['in_channels'],
                                                hidden_channels=config['bottleneck_lstm2']['out_channels'],
                                                norm=lstm_norm)
-
-        # IR block 4 (extracts spatial features and decrease spatial dimension by a factor of 2)
+        # IR block 4: 特征图非常小，强制使用 kernel_size=1
+        # 这是最容易出错的地方，因为此时特征图可能只有 1x1 或 2x2
         self.ir_block4 = self._make_ir_block(in_channels=config['ir_block4']['in_channels'],
                                              out_channels=config['ir_block4']['out_channels'],
                                              num_block=config['ir_block4']['num_block'],
@@ -191,7 +187,8 @@ class RecordEncoder(nn.Module):
                                              stride=config['ir_block4']['stride'],
                                              use_norm=config['ir_block4']['use_norm'],
                                              use_cbam=use_cbam, cbam_reduction=cbam_reduction,
-                                             cbam_kernel_size=cbam_kernel_size)
+                                             cbam_kernel_size=1)  # 强制使用 kernel_size=1
+
 
     def forward(self, x):
         """
