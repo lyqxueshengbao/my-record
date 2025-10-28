@@ -51,10 +51,10 @@ model_cfg:
   # cbam_kernel_size: 7
 
 train_cfg:
-  ckpt_dir: logs/carrada_cbam_standard  # 根据配置修改日志目录名
+  ckpt_dir: logs/carrada_cbam_light  # 根据配置修改日志目录名
   n_epoch: 500
-  batch_size: 3
-  accumulate_grad: 1
+  batch_size: 1
+  accumulate_grad: 3
   lr: 0.001
   lr_step: 20
   loss_step: 100
