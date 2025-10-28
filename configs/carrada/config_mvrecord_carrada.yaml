@@ -53,8 +53,8 @@ model_cfg:
 train_cfg:
   ckpt_dir: logs/carrada_cbam_light  # 根据配置修改日志目录名
   n_epoch: 500
-  batch_size: 2
-  accumulate_grad: 4
+  batch_size: 1
+  accumulate_grad: 8
   lr: 0.001
   lr_step: 20
   loss_step: 100
