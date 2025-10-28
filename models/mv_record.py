@@ -1,3 +1,6 @@
+import torch
+from torch import nn
+from models.record import RecordEncoder, RecordDecoder
 class MVRecord(nn.Module):
     def __init__(self, config, n_frames, in_channels=1, n_classes=4, norm='layer',
                  use_cbam=False, cbam_reduction=16, cbam_kernel_size=7):
