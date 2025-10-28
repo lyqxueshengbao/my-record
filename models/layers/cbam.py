@@ -1,104 +1,85 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 class ChannelAttention(nn.Module):
-    """
-    Channel Attention Module
-    Applies channel-wise attention using both average pooling and max pooling
-    """
-
-    def __init__(self, in_channels, reduction_ratio=16):
+    def __init__(self, channels, reduction=16):
         """
-        @param in_channels: number of input channels
-        @param reduction_ratio: reduction ratio for the MLP (default: 16)
+        Channel Attention Module
+        @param channels: number of input channels
+        @param reduction: reduction ratio for the bottleneck
         """
         super(ChannelAttention, self).__init__()
+
+        # ⭐ 关键修复：确保 reduced_channels 至少为 1
+        reduced_channels = max(channels // reduction, 1)
+
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         self.max_pool = nn.AdaptiveMaxPool2d(1)
 
-        # Shared MLP
-        self.fc = nn.Sequential(
-            nn.Conv2d(in_channels, in_channels // reduction_ratio, 1, bias=False),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(in_channels // reduction_ratio, in_channels, 1, bias=False)
-        )
+        # Shared MLP (使用 1x1 卷积实现)
+        self.fc1 = nn.Conv2d(channels, reduced_channels, 1, bias=False)
+        self.relu = nn.ReLU()
+        self.fc2 = nn.Conv2d(reduced_channels, channels, 1, bias=False)
+
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
-        """
-        @param x: input tensor with shape (B, C, H, W)
-        @return: channel attention map with shape (B, C, 1, 1)
-        """
-        avg_out = self.fc(self.avg_pool(x))
-        max_out = self.fc(self.max_pool(x))
+        # Average pooling branch
+        avg_out = self.fc2(self.relu(self.fc1(self.avg_pool(x))))
+        # Max pooling branch
+        max_out = self.fc2(self.relu(self.fc1(self.max_pool(x))))
+        # Combine and apply sigmoid
         out = avg_out + max_out
-        return self.sigmoid(out)
+        return self.sigmoid(out) * x
 
-
-import torch
-import torch.nn as nn
 
 class SpatialAttention(nn.Module):
-    """
-    Spatial Attention Module
-    Applies spatial attention using both average pooling and max pooling along the channel axis
-    """
-
     def __init__(self, kernel_size=7):
         """
+        Spatial Attention Module
         @param kernel_size: kernel size for the convolutional layer (default: 7)
         """
         super(SpatialAttention, self).__init__()
-        # 断言 kernel_size 必须是奇数，以保证 padding 计算正确
-        assert kernel_size % 2 == 1, 'kernel size must be an odd number'
 
-        # 使用通用公式计算 padding，这样无论 kernel_size 是 1, 3, 7 都能正确工作
+        # 断言 kernel_size 必须是奇数
+        assert kernel_size % 2 == 1, 'kernel size must be an odd number'
+        assert kernel_size >= 1, 'kernel size must be at least 1'
+
+        # 计算 padding
         padding = (kernel_size - 1) // 2
 
         self.conv = nn.Conv2d(2, 1, kernel_size, padding=padding, bias=False)
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
-        """
-        @param x: input tensor with shape (B, C, H, W)
-        @return: spatial attention map with shape (B, 1, H, W)
-        """
+        # 计算通道维度的平均值和最大值
         avg_out = torch.mean(x, dim=1, keepdim=True)
         max_out, _ = torch.max(x, dim=1, keepdim=True)
-        out = torch.cat([avg_out, max_out], dim=1)
-        out = self.conv(out)
-        return self.sigmoid(out)
 
+        # 拼接并通过卷积层
+        attention_input = torch.cat([avg_out, max_out], dim=1)
+        attention_map = self.sigmoid(self.conv(attention_input))
 
+        return x * attention_map
 
 
 class CBAM(nn.Module):
-    """
-    Convolutional Block Attention Module (CBAM)
-    Combines both channel and spatial attention mechanisms
-    Reference: "CBAM: Convolutional Block Attention Module" (ECCV 2018)
-    """
-
-    def __init__(self, in_channels, reduction_ratio=16, kernel_size=7):
+    def __init__(self, channels, reduction=16, spatial_kernel_size=7):
         """
-        @param in_channels: number of input channels
-        @param reduction_ratio: reduction ratio for channel attention (default: 16)
-        @param kernel_size: kernel size for spatial attention (default: 7)
+        Convolutional Block Attention Module (CBAM)
+        @param channels: number of input channels
+        @param reduction: reduction ratio for channel attention
+        @param spatial_kernel_size: kernel size for spatial attention
         """
         super(CBAM, self).__init__()
-        self.channel_attention = ChannelAttention(in_channels, reduction_ratio)
-        self.spatial_attention = SpatialAttention(kernel_size)
+
+        self.channel_attention = ChannelAttention(channels, reduction)
+        self.spatial_attention = SpatialAttention(spatial_kernel_size)
 
     def forward(self, x):
-        """
-        Apply CBAM attention to input tensor
-        @param x: input tensor with shape (B, C, H, W)
-        @return: attention-refined tensor with shape (B, C, H, W)
-        """
-        # Channel attention
-        x = x * self.channel_attention(x)
-        # Spatial attention
-        x = x * self.spatial_attention(x)
+        # 先应用通道注意力
+        x = self.channel_attention(x)
+        # 再应用空间注意力
+        x = self.spatial_attention(x)
         return x
