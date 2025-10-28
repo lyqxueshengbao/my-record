@@ -6,6 +6,7 @@ dataset_cfg:
   weight_path: /home/liyuqin/projects/record//configs/carrada/weights_config
   project_path: /home/liyuqin/projects/record//
   annot_type: dense
+
 model_cfg:
   name: MV-RECORD
   process_signal: true
@@ -17,8 +18,40 @@ model_cfg:
   backbone_pth: /home/liyuqin/projects/record//models/configs/mv_record.yaml
   width_mult: 1.0
   norm: layer
+
+  # ============ CBAM 注意力模块配置 ============
+  # 启用/禁用 CBAM 注意力机制
+  use_cbam: true
+
+  # 通道注意力的降维比例 (可选值: 8, 16, 32)
+  # - 8: 强注意力，参数多，计算量大
+  # - 16: 标准配置，平衡性能和效率
+  # - 32: 轻量级，参数少，速度快
+  cbam_reduction: 32
+
+  # 空间注意力的卷积核大小 (可选值: 3 或 7)
+  # - 3: 更小的感受野，计算快
+  # - 7: 更大的感受野，捕获更多上下文
+  cbam_kernel_size: 3
+
+  # ============ 可选的其他CBAM配置方案 ============
+  # 方案1 - 轻量级CBAM (速度优先):
+  # use_cbam: true
+  # cbam_reduction: 32
+  # cbam_kernel_size: 3
+
+  # 方案2 - 标准CBAM (平衡):
+  # use_cbam: true
+  # cbam_reduction: 16
+  # cbam_kernel_size: 7
+
+  # 方案3 - 强注意力CBAM (精度优先):
+  # use_cbam: true
+  # cbam_reduction: 8
+  # cbam_kernel_size: 7
+
 train_cfg:
-  ckpt_dir: logs/carrada_cbam
+  ckpt_dir: logs/carrada_cbam_standard  # 根据配置修改日志目录名
   n_epoch: 500
   batch_size: 3
   accumulate_grad: 1
