@@ -93,7 +93,7 @@ class InvertedResidual(nn.Module):
 
         # Add CBAM attention module if specified
         if self.use_cbam:
-            self.cbam = CBAM(out_channels, reduction_ratio=cbam_reduction, kernel_size=cbam_kernel_size)
+            self.cbam = CBAM(channels=out_channels, reduction=cbam_reduction, spatial_kernel_size=cbam_kernel_size)
 
     def forward(self, x):
         """
