@@ -8,7 +8,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, Learning
 from pytorch_lightning.loggers import TensorBoardLogger
 from utils import update_config_dict, get_transformations, get_models
 from datasets import SequenceCarradaDataset, CarradaDataset, Carrada, CarradaDatasetRangeDoppler, CarradaDatasetRangeAngle
-NUM_WORKERS = 4
+NUM_WORKERS = 8
 def parse_args():
     parser = argparse.ArgumentParser(description='MV-RECORD')
     parser.add_argument('--config', type=str, help='configuration file path')
@@ -50,7 +50,7 @@ else:
 # Train dataset
 train_dataset = Carrada(config).get('Train')
 seq_dataloader = DataLoader(SequenceCarradaDataset(train_dataset), batch_size=1,
-                            shuffle=True, num_workers=0)
+                            shuffle=True, num_workers=NUM_WORKERS)
 all_datasets = []
 
 transform_names = config['train_cfg']['transformations'].split(',')
@@ -69,7 +69,7 @@ train_dataloader = DataLoader(ConcatDataset(all_datasets), batch_size=train_cfg[
 # Val dataset
 val_dataset = Carrada(config).get('Validation')
 seq_dataloader = DataLoader(SequenceCarradaDataset(val_dataset), batch_size=1,
-                            shuffle=False, num_workers=0)
+                            shuffle=False, num_workers=NUM_WORKERS)
 all_datasets = []
 for _, data in enumerate(seq_dataloader):
     seq_name, seq = data
@@ -80,7 +80,7 @@ for _, data in enumerate(seq_dataloader):
                                     process_signal=True,
                                     n_frames=n_frames, add_temp=True))
 val_dataloader = DataLoader(ConcatDataset(all_datasets), batch_size=train_cfg['batch_size'], shuffle=False,
-                            num_workers=0, pin_memory=True)
+                            num_workers=NUM_WORKERS, pin_memory=True)
 
 # Logger
 log_dir = train_cfg['ckpt_dir']
@@ -131,7 +131,7 @@ print('Test model')
 # Test dataset
 test_dataset = Carrada(config).get('Test')
 seq_dataloader = DataLoader(SequenceCarradaDataset(test_dataset), batch_size=1,
-                            shuffle=False, num_workers=4)
+                            shuffle=False, num_workers=NUM_WORKERS)
 all_datasets = []
 for _, data in enumerate(seq_dataloader):
     seq_name, seq = data
@@ -142,6 +142,6 @@ for _, data in enumerate(seq_dataloader):
                                        process_signal=True,
                                        n_frames=n_frames, add_temp=True))
 test_dataloader = DataLoader(ConcatDataset(all_datasets), batch_size=train_cfg['batch_size'], shuffle=False,
-                             num_workers=4, pin_memory=True)
+                             num_workers=NUM_WORKERS, pin_memory=True)
 
 trainer.test(model, dataloaders=test_dataloader, ckpt_path='best')
