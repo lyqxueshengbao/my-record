@@ -121,7 +121,7 @@ else:
     print('WARNING: CUDA not available, use CPU')
     accelerator = 'cpu'
 trainer = pl.Trainer(logger=logger, callbacks=callbacks, accelerator=accelerator, strategy='ddp_find_unused_parameters_false', devices=6,
-                    precision='16',
+                    precision=16,
                      max_epochs=train_cfg['n_epoch'],
                      accumulate_grad_batches=train_cfg['accumulate_grad'])
 
