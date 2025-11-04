@@ -227,10 +227,12 @@ class CruwExecutor(pl.LightningModule):
             return batch
         else:
             return batch
-        
+
     def configure_optimizers(self):
         opti = self.train_cfg['optimizer']
-        scheduler = self.train_cfg['scheduler']
+        scheduler_name = self.train_cfg['scheduler']  # 变量重命名以避免冲突
+
+        # 1. 定义优化器 (保留你原有的逻辑)
         if opti == 'adam':
             optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
         elif opti == 'adam_reg':
@@ -240,22 +242,49 @@ class CruwExecutor(pl.LightningModule):
             optimizer = torch.optim.SGD(self.parameters(), lr=self.learning_rate, momentum=0.9)
         elif opti == 'adamw':
             optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=0.0001)
-        else: 
-            raise ValueError
-
-        if scheduler == 'exp':
-            lr_scheduler = {
-                'scheduler': torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9),
-                'interval': 'epoch',
-                'frequency': 10
-            }
-        elif scheduler == 'step':
-            # for DANet
-            lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
-        elif scheduler is None:
-            return optimizer
         else:
             raise ValueError
-        return [optimizer], [lr_scheduler]
+
+        # 2. 如果不需要调度器，直接返回优化器
+        if scheduler_name is None:
+            return optimizer
+
+        # --- 这是你需要的 Warmup 逻辑 ---
+
+        # 3. 定义 Warmup 调度器 (5个 epochs)
+        warmup_epochs = 5
+        warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+            optimizer,
+            start_factor=0.01,  # 从你LR的 1% 开始
+            end_factor=1.0,  # 预热到你LR的 100%
+            total_iters=warmup_epochs
+        )
+
+        # 4. 定义预热后的主调度器 (保留你原有的逻辑)
+        if scheduler_name == 'exp':
+            # 你原来是 ExponentialLR(gamma=0.9) + frequency: 10
+            # 这等同于 StepLR(step_size=10, gamma=0.9)，这样才能和SequentialLR配合
+            main_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.9)
+
+        elif scheduler_name == 'step':
+            # 保留你原来的 'step' 逻辑
+            main_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
+        else:
+            raise ValueError
+
+        # 5. 将 Warmup 和 Main 调度器链式组合
+        sequential_scheduler = torch.optim.lr_scheduler.SequentialLR(
+            optimizer,
+            schedulers=[warmup_scheduler, main_scheduler],
+            milestones=[warmup_epochs]  # 在第 5 个 epoch 结束时切换
+        )
+
+        # 6. 以 PyTorch Lightning 要求的格式返回
+        lr_scheduler_dict = {
+            'scheduler': sequential_scheduler,
+            'interval': 'epoch',  # 必须是 'epoch'
+        }
+
+        return [optimizer], [lr_scheduler_dict]
 
 
