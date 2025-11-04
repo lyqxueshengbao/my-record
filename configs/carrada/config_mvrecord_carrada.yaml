@@ -20,9 +20,9 @@ model_cfg:
 train_cfg:
   ckpt_dir: logs/carrada
   n_epoch: 500
-  batch_size: 2
+  batch_size: 3
   accumulate_grad: 1
-  lr: 0.001
+  lr: 0.00225
   lr_step: 20
   loss_step: 100
   val_step: 2000

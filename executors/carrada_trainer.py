@@ -81,12 +81,43 @@ class CarradaExecutor(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr, capturable=True)
+        # 1. 定义优化器
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr, capturable=True)  #
+
+        # --- 这是你需要添加的 Warmup 逻辑 ---
+
+        # 2. 定义你的主调度器 (保持原有逻辑)
+        # 你原来是 ExponentialLR(gamma=0.9) + frequency: 20
+        # 这等同于 StepLR，每 20 步衰减 0.9
+        main_scheduler = torch.optim.lr_scheduler.StepLR(
+            self.optimizer,
+            step_size=self.lr_step,  # self.lr_step 在你的配置中是 20
+            gamma=0.9  # 你原来 ExponentialLR 的 gamma
+        )
+
+        # 3. 定义 Warmup 调度器 (例如, 5 个 epochs)
+        warmup_epochs = 5
+        warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+            self.optimizer,
+            start_factor=0.01,  # 从 1% 的学习率开始
+            end_factor=1.0,  # 预热到 100% 的学习率
+            total_iters=warmup_epochs  # 预热 5 个 epochs
+        )
+
+        # 4. 将它们链式组合在一起
+        # SequentialLR 会先执行 warmup_scheduler 5 个 epochs,
+        # 然后切换到 main_scheduler
+        sequential_scheduler = torch.optim.lr_scheduler.SequentialLR(
+            self.optimizer,
+            schedulers=[warmup_scheduler, main_scheduler],
+            milestones=[warmup_epochs]  # 在第 5 个 epoch 结束时切换
+        )
+
+        # 5. 以 PyTorch Lightning 要求的格式返回
         self.scheduler = {
-            'scheduler': torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=0.9),
-            'interval': 'epoch',
-            'frequency': 20
-        }        
+            'scheduler': sequential_scheduler,
+            'interval': 'epoch',  # 确保调度器在每个 epoch 结束时都被调用
+        }
         return [self.optimizer], [self.scheduler]
 
     def on_train_start(self):
