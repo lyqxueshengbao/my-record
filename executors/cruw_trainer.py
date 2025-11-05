@@ -122,8 +122,9 @@ class CruwExecutor(pl.LightningModule):
 
         loss = self.loss_fct(confmap_pred, confmap_gts)
 
-        self.log('train_loss', loss, on_step=True, on_epoch=True, logger=True)
-        self.log('hp/train_loss', loss, on_epoch=True)
+        self.log('train_loss', loss, on_step=True, on_epoch=True, logger=True, sync_dist=True,
+                 batch_size=self.batch_size)
+        self.log('hp/train_loss', loss, on_epoch=True, sync_dist=True, batch_size=self.batch_size)
         return loss
 
     def validation_step(self, batch, batch_id):
@@ -142,8 +143,9 @@ class CruwExecutor(pl.LightningModule):
 
         loss = self.loss_fct(confmap_pred, confmap_gts)
 
-        self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=False, logger=True)
-        self.log('hp/val_loss', loss, on_epoch=True)
+        self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True,
+                 batch_size=self.batch_size)
+        self.log('hp/val_loss', loss, on_epoch=True, sync_dist=True, batch_size=self.batch_size)
 
     def test_step(self, batch, batch_id):
         """
