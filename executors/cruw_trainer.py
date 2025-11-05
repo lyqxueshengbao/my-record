@@ -4,7 +4,7 @@ import pytorch_lightning as pl
 from torch import nn
 import torch
 from torch.utils.data import DataLoader
-from utils.loss import SmoothCELoss
+from utils.loss import SmoothCELoss, FocalLoss, SmoothFocalLoss
 from datasets.cruw.collate_functions import cr_collate
 from evaluation.postprocess import post_process_single_frame_cruw, write_dets_results_single_frame
 from cruw.eval import evaluate_rodnet_seq
@@ -68,13 +68,24 @@ class CruwExecutor(pl.LightningModule):
         loss_type = self.train_cfg['loss']
         if loss_type == 'bce':
             return nn.BCELoss()
+        elif loss_type == 'focal':
+            # Focal Loss parameters from config or defaults
+            alpha = self.train_cfg.get('focal_alpha', 0.25)
+            gamma = self.train_cfg.get('focal_gamma', 2.0)
+            return FocalLoss(alpha=alpha, gamma=gamma)
+        elif loss_type == 'smooth_focal':
+            # Smooth Focal Loss parameters
+            alpha = self.train_cfg.get('focal_alpha', 0.25)
+            gamma = self.train_cfg.get('focal_gamma', 2.0)
+            alpha_weight = self.train_cfg.get('alpha_loss', 0.5)
+            return SmoothFocalLoss(alpha=alpha, gamma=gamma, alpha_weight=alpha_weight)
         elif loss_type == 'mse':
             return nn.SmoothL1Loss()
         elif loss_type == 'smooth_ce':
             alpha = self.train_cfg['alpha_loss']
             return SmoothCELoss(alpha)
         else:
-            raise ValueError
+            raise ValueError(f"Unknown loss type: {loss_type}")
 
     def train_dataloader(self):
         """
@@ -259,5 +270,4 @@ class CruwExecutor(pl.LightningModule):
         else:
             raise ValueError
         return [optimizer], [lr_scheduler]
-
 
