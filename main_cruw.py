@@ -139,7 +139,10 @@ trainer = pl.Trainer(
     logger=logger,
     callbacks=callbacks,
     accelerator=accelerator,
-    strategy='ddp',
+    strategy=DDPStrategy(
+        gradient_as_bucket_view=False,  # 解决梯度 strides 不匹配警告
+        find_unused_parameters=False     # 如果有未使用的参数设为 True
+    ),
     devices=6,
     max_epochs=train_cfg['n_epoch'],
     deterministic=deterministic,
