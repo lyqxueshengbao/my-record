@@ -70,9 +70,12 @@ class CruwExecutor(pl.LightningModule):
             if param.grad is not None and not param.grad.is_contiguous():
                 param.grad = param.grad.contiguous()
 
-    def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure=None):
+    def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_idx=0,
+                       optimizer_closure=None, on_tpu=False, using_native_amp=False,
+                       using_lbfgs=False):
         """
         在优化器更新前确保梯度连续，解决 DDP strides 警告
+        兼容 PyTorch Lightning 多个版本
         """
         # 确保所有梯度都是连续的
         for param in self.parameters():
@@ -80,7 +83,16 @@ class CruwExecutor(pl.LightningModule):
                 param.grad = param.grad.contiguous()
 
         # 调用父类的优化器步骤
-        super().optimizer_step(epoch, batch_idx, optimizer, optimizer_closure)
+        super().optimizer_step(
+            epoch=epoch,
+            batch_idx=batch_idx,
+            optimizer=optimizer,
+            optimizer_idx=optimizer_idx,
+            optimizer_closure=optimizer_closure,
+            on_tpu=on_tpu,
+            using_native_amp=using_native_amp,
+            using_lbfgs=using_lbfgs
+        )
 
     # ========== 以上是新增代码 ==========
     def get_loss(self):
