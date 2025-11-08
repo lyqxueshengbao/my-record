@@ -60,6 +60,29 @@ class CruwExecutor(pl.LightningModule):
         self.evalImgs_all = []
         self.n_frames_all = 0
 
+    # ========== 添加以下两个方法 ==========
+
+    def on_after_backward(self):
+        """
+        在反向传播后确保所有梯度都是连续的，解决 DDP strides 警告
+        """
+        for param in self.parameters():
+            if param.grad is not None and not param.grad.is_contiguous():
+                param.grad = param.grad.contiguous()
+
+    def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_closure=None):
+        """
+        在优化器更新前确保梯度连续，解决 DDP strides 警告
+        """
+        # 确保所有梯度都是连续的
+        for param in self.parameters():
+            if param.grad is not None and not param.grad.is_contiguous():
+                param.grad = param.grad.contiguous()
+
+        # 调用父类的优化器步骤
+        super().optimizer_step(epoch, batch_idx, optimizer, optimizer_closure)
+
+    # ========== 以上是新增代码 ==========
     def get_loss(self):
         """
         Define the loss function to use according to the configuration file
