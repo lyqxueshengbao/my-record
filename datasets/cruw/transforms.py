@@ -50,6 +50,60 @@ def noise(radar, gt, sigma):
     return radar, gt
 
 
+def sequence_mixup(radar1, confmap1, radar2, confmap2, alpha=0.2):
+    """
+    Apply MixUp augmentation on sequence-level radar data and confidence maps
+    保持时序完整性的序列级混合
+
+    @param radar1: first radar sequence [C, T, H, W]
+    @param confmap1: first confidence map [n_class, T, H, W] or [n_class, H, W]
+    @param radar2: second radar sequence [C, T, H, W]
+    @param confmap2: second confidence map [n_class, T, H, W] or [n_class, H, W]
+    @param alpha: Beta distribution parameter for mixup ratio
+    @return: mixed radar data, mixed confidence maps, and lambda value
+    """
+    # Sample mixing ratio from Beta distribution
+    if alpha > 0:
+        lam = np.random.beta(alpha, alpha)
+    else:
+        lam = 1.0
+
+    # Mix radar sequences (element-wise)
+    mixed_radar = lam * radar1 + (1 - lam) * radar2
+
+    # Mix confidence maps (element-wise)
+    mixed_confmap = lam * confmap1 + (1 - lam) * confmap2
+
+    return mixed_radar, mixed_confmap, lam
+
+
+def spatial_mixup(radar1, confmap1, radar2, confmap2):
+    """
+    Apply spatial MixUp on radar data (alternative safer approach)
+    在距离维度上进行空间区域混合
+
+    @param radar1: first radar sequence [C, T, H, W]
+    @param confmap1: first confidence map [n_class, T, H, W] or [n_class, H, W]
+    @param radar2: second radar sequence [C, T, H, W]
+    @param confmap2: second confidence map [n_class, T, H, W] or [n_class, H, W]
+    @return: spatially mixed radar data and confidence maps
+    """
+    _, _, h, w = radar1.shape
+
+    # Randomly select cut position in range dimension (width)
+    cut_w = np.random.randint(w // 4, 3 * w // 4)
+
+    # Clone to avoid in-place modification
+    mixed_radar = radar1.clone()
+    mixed_confmap = confmap1.clone()
+
+    # Mix spatial regions
+    mixed_radar[..., cut_w:] = radar2[..., cut_w:]
+    mixed_confmap[..., cut_w:] = confmap2[..., cut_w:]
+
+    return mixed_radar, mixed_confmap
+
+
 def random_apply(radar, gt, image_paths, aug_dict=None):
     """
     Randomly apply data augmentation operation on input radar frames and ground truth
