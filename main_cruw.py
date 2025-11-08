@@ -10,7 +10,7 @@ from utils import parse_configs, update_config_dict, get_models
 from datasets import ROD2021Dataset
 from evaluation import eval_on_test, eval_on_val
 from executors import RECORDExecutor as Model
-
+from pytorch_lightning.strategies import DDPStrategy
 
 def parse_args():
     parser = argparse.ArgumentParser(description='RECORD model')
