@@ -35,55 +35,42 @@ config_dict = yaml.load(open(args.config, 'r'), Loader=yaml.FullLoader)
 config_dict = update_config_dict(config_dict, args)
 
 pl.seed_everything(seed=seed, workers=True)
+if deterministic:
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
-model_cfg = config_dict['model_cfg']
+
+dataset = ROD2021Dataset(config_dict['dataset_cfg'])
 train_cfg = config_dict['train_cfg']
-test_cfg = config_dict['test_cfg']
-dataset_cfg = config_dict['dataset_cfg']
-
-# Load model
-model_instance = get_models(model_cfg)
-model_name = model_cfg['name']
-
-# Init CRUW dataset utils
-dataset = CRUW(data_root=config_dict['dataset_cfg']['base_root'],
-               sensor_config_name=config_dict['model_cfg']['sensor_config'])
-radar_configs = dataset.sensor_cfg.radar_cfg
-range_grid = dataset.range_grid
-angle_grid = dataset.angle_grid
-data_dir = config_dict['dataset_cfg']['data_dir']
-
-# Load datasets
-train_dataset = ROD2021Dataset(data_dir=data_dir, dataset=dataset, config_dict=config_dict, all_confmaps=False,
-                               split='train')
-valid_dataset = ROD2021Dataset(data_dir=data_dir, dataset=dataset, config_dict=config_dict, all_confmaps=False,
-                               split='valid')
-
-log_dir = train_cfg['ckpt_dir']
-if not os.path.exists(log_dir):
-    os.makedirs(log_dir)
-
-logger = TensorBoardLogger(save_dir=train_cfg['ckpt_dir'], version=model_name+'_'+str(seed), name=model_name, default_hp_metric=False)
-
-# Add some entries to the configuration dict to get back the logs
-run_dir = logger.experiment.log_dir
-config_dict['train_cfg']['run_dir'] = run_dir
-
-checkpoint_callback = ModelCheckpoint(dirpath=None, monitor='val_loss', mode="min", save_last=True, save_top_k=5)
-lr_tracker = LearningRateMonitor()
-
-early_stop = EarlyStopping(monitor='val_loss', patience=7, mode='min')
-callbacks = [checkpoint_callback, lr_tracker, early_stop]
-
-# Update variables with new config dict
-if 'RECORD' in model_name:
-    backbone_cfg = yaml.load(open(model_cfg['backbone_pth']), yaml.FullLoader)
-    config_dict['model_cfg']['layout'] = backbone_cfg
-
 model_cfg = config_dict['model_cfg']
-train_cfg = config_dict['train_cfg']
 
-model = Model(model=model_instance, train_dataset=train_dataset, val_dataset=valid_dataset, config_dict=config_dict,
+model = Model(model_cfg, train_cfg['loss_cfg'], config_dict['dataset_cfg']['object_cfg'],
+              train_cfg['lr'], train_cfg['optimizer_cfg'],
+              config_dict['dataset_cfg']['win_size'], train_cfg['n_epoch'],
+              dataset.max_in_matrix, dataset.max_out_matrix)
+
+logger = TensorBoardLogger(save_dir=os.path.join('logs', config_dict['model_cfg']['name']),
+                           name=config_dict['dataset_cfg']['name'])
+callbacks = [ModelCheckpoint(dirpath=os.path.join(logger.log_dir, 'checkpoints'),
+                             filename='{epoch}-{val_loss:.2f}-{AP:.2f}-{AR:.2f}',
+                             monitor='val_loss',
+                             mode='min',
+                             save_last=True,
+                             save_top_k=5),
+             EarlyStopping(monitor='val_loss', patience=train_cfg['patience'], mode='min',
+                           min_delta=0.001),
+             LearningRateMonitor(logging_interval='step')]
+
+if args.resume_ckpt is None:
+    if train_cfg['load_pretrain']:
+        model.load_pretrain_record(train_cfg['pretrain_path'], train_cfg['pretrain_name'])
+else:
+    model.load_from_checkpoint(args.resume_ckpt, model_cfg=model_cfg, loss_cfg=train_cfg['loss_cfg'],
+                 object_cfg=config_dict['dataset_cfg']['object_cfg'],
+                 lr=train_cfg['lr'], optimizer_cfg=train_cfg['optimizer_cfg'],
+                 win_size=config_dict['dataset_cfg']['win_size'], n_epoch=train_cfg['n_epoch'],
+                 max_in_matrix=dataset.max_in_matrix, max_out_matrix=dataset.max_out_matrix,
+                 config_dict=config_dict,
                  cruw_dataset_obj=dataset, save_dir=logger.log_dir)
 
 if torch.cuda.is_available():
@@ -93,7 +80,8 @@ else:
     print('WARNING: CUDA not available, use CPU')
     accelerator = 'cpu'
 trainer = pl.Trainer(logger=logger, callbacks=callbacks, accelerator=accelerator, strategy='ddp', devices=6,
-                     max_epochs=train_cfg['n_epoch'], deterministic=deterministic)
+                     max_epochs=train_cfg['n_epoch'], deterministic=deterministic,
+                     gradient_clip_val=1.0) # <--- 新增梯度裁剪
 
 print('Start training')
 trainer.fit(model, ckpt_path=args.resume_ckpt)
@@ -104,14 +92,13 @@ data_root = config_dict['dataset_cfg']['data_root']
 if args.test_on_val:
     print('Set for evaluation: VALIDATION')
     eval_on_val(trainer=trainer, executor=model, dataset=dataset, data_root=config_dict['dataset_cfg']['data_root'],
-                config_dict=config_dict, all_confmaps=True)
+                config_dict=config_dit, all_confmaps=True)
 elif args.test_all:
     eval_on_val(trainer=trainer, executor=model, dataset=dataset, data_root=config_dict['dataset_cfg']['data_root'],
                 config_dict=config_dict, all_confmaps=True, ckpt_path='best')
     eval_on_test(trainer=trainer, executor=model, dataset=dataset, data_root=config_dict['dataset_cfg']['data_root'],
                  config_dict=config_dict, all_confmaps=True, ckpt_path='best')
-else:    
+else:
+    print('Set for evaluation: TEST')
     eval_on_test(trainer=trainer, executor=model, dataset=dataset, data_root=config_dict['dataset_cfg']['data_root'],
                  config_dict=config_dict, all_confmaps=True, ckpt_path='best')
-
-print('Training finished.')
