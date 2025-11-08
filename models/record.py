@@ -281,20 +281,20 @@ class RecordDecoder(nn.Module):
                                            output_padding=config['conv_transpose1']['output_padding'],
                                            padding=config['conv_transpose1']['padding'])
 
+        # vvvvvvvvvvvvvvvv 修改部分 vvvvvvvvvvvvvvvv
+        # 评估上采样和第一个LSTM隐藏状态拼接后的通道数
         conv_norm = None if not config['conv_skip1']['use_norm'] else norm_decoder
-        # InvertedResidual 层的定义保持不变
-        self.conv_skip_connection1 = InvertedResidual(in_channels=config['conv_skip1']['in_channels'],
+        # 从配置中读取拼接后的通道数
+        skip1_in_channels = config['conv_skip1']['in_channels']
+        # 1. 新增ECA层，输入通道为拼接后的通道数
+        self.eca_skip1 = ECALayer(channels=skip1_in_channels)
+        # 2. InvertedResidual 层的输入通道不变
+        self.conv_skip_connection1 = InvertedResidual(in_channels=skip1_in_channels,
                                                       out_channels=config['conv_skip1']['out_channels'],
                                                       expansion_factor=config['conv_skip1']['expansion_factor'],
                                                       stride=config['conv_skip1']['stride'],
                                                       norm=conv_norm)
-
-        # vvvvvvvvvvvvvvvv 新方案C vvvvvvvvvvvvvvvv
-        # 1. ECA层在这里定义
-        # 2. 它的输入通道 = conv_skip_connection1 的输出通道
-        skip1_out_channels = config['conv_skip1']['out_channels']
-        self.eca_skip1 = ECALayer(channels=skip1_out_channels)
-        # ^^^^^^^^^^^^^^ 新方案C ^^^^^^^^^^^^^^
+        # ^^^^^^^^^^^^^^ 修改部分 ^^^^^^^^^^^^^^
 
         self.up_conv2 = nn.ConvTranspose2d(in_channels=config['conv_transpose2']['in_channels'],
                                            out_channels=config['conv_transpose2']['out_channels'],
@@ -303,20 +303,20 @@ class RecordDecoder(nn.Module):
                                            output_padding=config['conv_transpose2']['output_padding'],
                                            padding=config['conv_transpose2']['padding'])
 
+        # vvvvvvvvvvvvvvvv 修改部分 vvvvvvvvvvvvvvvv
+        # 评估上采样和第二个LSTM隐藏状态拼接后的通道数
         conv_norm = None if not config['conv_skip2']['use_norm'] else norm_decoder
-        # InvertedResidual 层的定义保持不变
-        self.conv_skip_connection2 = InvertedResidual(in_channels=config['conv_skip2']['in_channels'],
+        # 从配置中读取拼接后的通道数
+        skip2_in_channels = config['conv_skip2']['in_channels']
+        # 1. 新增ECA层，输入通道为拼接后的通道数
+        self.eca_skip2 = ECALayer(channels=skip2_in_channels)
+        # 2. InvertedResidual 层的输入通道不变
+        self.conv_skip_connection2 = InvertedResidual(in_channels=skip2_in_channels,
                                                       out_channels=config['conv_skip2']['out_channels'],
                                                       expansion_factor=config['conv_skip2']['expansion_factor'],
                                                       stride=config['conv_skip2']['stride'],
                                                       norm=conv_norm)
-
-        # vvvvvvvvvvvvvvvv 新方案C vvvvvvvvvvvvvvvv
-        # 1. ECA层在这里定义
-        # 2. 它的输入通道 = conv_skip_connection2 的输出通道
-        skip2_out_channels = config['conv_skip2']['out_channels']
-        self.eca_skip2 = ECALayer(channels=skip2_out_channels)
-        # ^^^^^^^^^^^^^^ 新方案C ^^^^^^^^^^^^^^
+        # ^^^^^^^^^^^^^^ 修改部分 ^^^^^^^^^^^^^^
 
         self.up_conv3 = nn.ConvTranspose2d(in_channels=config['conv_transpose3']['in_channels'],
                                            out_channels=config['conv_transpose3']['out_channels'],
@@ -350,20 +350,20 @@ class RecordDecoder(nn.Module):
         @return: ConfMap prediction (B, n_class, H, W)
         """
         # Spatio-temporal skip connection 1
-        # 1. 拼接
+        # 1. 拼接 (Concatenate)
         skip_connection1_out = torch.cat((self.up_conv1(st_features_backbone), st_features_lstm2), dim=1)
-        # 2. 卷积 (IR Block)
+        # 2. 应用ECA注意力 (新增)
+        skip_connection1_out = self.eca_skip1(skip_connection1_out)
+        # 3. 卷积 (IR Block)
         x = self.conv_skip_connection1(skip_connection1_out)
-        # 3. 应用ECA注意力 (新位置)
-        x = self.eca_skip1(x)
 
         # Spatio-temporal skip connection 2
-        # 1. 拼接
+        # 1. 拼接 (Concatenate)
         skip_connection2_out = torch.cat((self.up_conv2(x), st_features_lstm1), dim=1)
-        # 2. 卷积 (IR Block)
+        # 2. 应用ECA注意力 (新增)
+        skip_connection2_out = self.eca_skip2(skip_connection2_out)
+        # 3. 卷积 (IR Block)
         x = self.conv_skip_connection2(skip_connection2_out)
-        # 3. 应用ECA注意力 (新位置)
-        x = self.eca_skip2(x)
 
         # 保持不变
         x = self.up_conv3(x)
