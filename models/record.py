@@ -58,7 +58,7 @@ def build_model(model_config, alpha=1.0, norm_type='layer'):
 
 
 class Record(nn.Module):
-    def __init__(self, config, in_channels=8, norm='layer', n_class=3):
+    def __init__(self, config, in_channels=8, norm='batch', n_class=3):
         """
         RECurrent Online object detectOR (RECORD) model class
         @param config: configuration file of the model
@@ -92,7 +92,7 @@ class Record(nn.Module):
 
 
 class RecordEncoder(nn.Module):
-    def __init__(self, in_channels, config, norm='layer'):
+    def __init__(self, in_channels, config, norm='batch'):
         """
         RECurrent Online object detectOR (RECORD) features extractor.
         @param in_channels: number of input channels (default: 8)
@@ -205,7 +205,7 @@ class RecordEncoder(nn.Module):
 
 
 class RecordDecoder(nn.Module):
-    def __init__(self, config, n_class, norm_decoder="layer"):
+    def __init__(self, config, n_class, norm_decoder="batch"):
         """
         RECurrent Online object detectOR (RECORD) decoder.
 
