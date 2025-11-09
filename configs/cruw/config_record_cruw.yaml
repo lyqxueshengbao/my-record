@@ -97,11 +97,11 @@ confmap_cfg:
     cyclist: 2
     car: 3
 train_cfg:
-  ckpt_dir: logs/rod2021_focaloss+batchnorm
+  ckpt_dir: logs/rod2021_focaloss+batchnorm_0.001
   n_epoch: 100
   batch_size: 10
   accumulate_grad: 1
-  lr: 0.00375
+  lr: 0.001
   optimizer: adam
   scheduler: exp
   # 损失函数选择: 'bce', 'focal', 'smooth_focal', 'mse', 'smooth_ce'
