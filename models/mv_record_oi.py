@@ -1,226 +1,95 @@
-# models/mv_record_oi.py
-# ----------------------------------------------------------------
 import torch
-import torch.nn as nn
-from .record_oi import RECORD_OI
-from .layers.ghost_module import GhostBottleneck  # <--- MODIFIED: 导入 GhostBottleneck
-# from .layers.inverted_residual import InvertedResidual # <--- MODIFIED: 移除 InvertedResidual
-from utils import get_norm_layer
+from torch import nn
+from models.record_oi import RecordEncoder, RecordDecoder
 
 
-class MV_RECORD_OI(nn.Module):
-    def __init__(self, config):
-        super(MV_RECORD_OI, self).__init__()
-        self.config = config.model_config
-        self.n_classes = self.config['n_classes']
-        self.ra_encoder = RECORD_OI(config)
-        self.rd_encoder = RECORD_OI(config)
-        self.ad_encoder = RECORD_OI(config)
-        self.norm_layer = get_norm_layer(self.config['norm'])
+class MVRecord(nn.Module):
+    def __init__(self, config, n_frames, in_channels=1, n_classes=4, norm='layer'):
+        """
+        Multi view RECurrent Online object detectOR (MV-RECORD) model class
+        @param config: config dict to build the model
+        @param n_frames: number of input frames (i.e. timesteps)
+        @param in_channels: number of input channels (default: 1)
+        @param n_classes: number of classes (default: 4)
+        @param norm: type of normalisation (default: LayerNorm). Other normalisation are not supported yet.
+        """
+        super(MVRecord, self).__init__()
+        self.n_classes = n_classes
+        self.in_channels = in_channels
+        self.n_frames = n_frames
 
-        self.conv_t1_ra = nn.ConvTranspose2d(self.ra_encoder.channels[7] * 3,
-                                             self.ra_encoder.channels[5], 2, 2)
+        # Backbone (encoder)
+        self.rd_encoder = RecordEncoder(in_channels=self.in_channels, config=config['encoder_rd_config'], norm=norm)
+        self.ra_encoder = RecordEncoder(in_channels=self.in_channels, config=config['encoder_ra_config'], norm=norm)
+        self.ad_encoder = RecordEncoder(in_channels=self.in_channels, config=config['encoder_ad_config'], norm=norm)
 
-        # <--- MODIFIED BLOCK START --->
-        hidden_dim_ra = int(round(self.ra_encoder.channels[5] * 4))  # expand_ratio = 4
-        self.conv9_ra = GhostBottleneck(
-            in_chs=self.ra_encoder.channels[5],
-            mid_chs=hidden_dim_ra,
-            out_chs=self.ra_encoder.channels[5],
-            kernel_size=3,
-            stride=1,
-            norm_layer=self.norm_layer
-        )
-        # <--- MODIFIED BLOCK END --->
+        # Temporal Multi View Skip Connections
+        in_channels_skip_connection_lstm1 = config['encoder_rd_config']['bottleneck_lstm1']['in_channels'] + \
+                                            config['encoder_ad_config']['bottleneck_lstm1']['in_channels'] + \
+                                            config['encoder_ra_config']['bottleneck_lstm1']['in_channels']
+        # We project the concatenation of features to the initial #channels of each view (kernel_size = 1)
+        self.skip_connection_lstm1_conv = nn.Conv2d(in_channels=in_channels_skip_connection_lstm1,
+                                                    out_channels=config['encoder_rd_config']['bottleneck_lstm1']['out_channels'],
+                                                    kernel_size=1)
 
-        self.conv_t2_ra = nn.ConvTranspose2d(self.ra_encoder.channels[5],
-                                             self.ra_encoder.channels[3], 2, 2)
+        in_channels_skip_connection_lstm2 = config['encoder_rd_config']['bottleneck_lstm2']['in_channels'] + \
+                                            config['encoder_ad_config']['bottleneck_lstm2']['in_channels'] + \
+                                            config['encoder_ra_config']['bottleneck_lstm2']['in_channels']
+        # We project the concatenation of features to the initial #channels of each view (kernel_size = 1)
+        self.skip_connection_lstm2_conv = nn.Conv2d(in_channels=in_channels_skip_connection_lstm2,
+                                                    out_channels=config['encoder_rd_config']['bottleneck_lstm2']['out_channels'],
+                                                    kernel_size=1)
 
-        # <--- MODIFIED BLOCK START --->
-        hidden_dim_ra_2 = int(round(self.ra_encoder.channels[3] * 4))  # expand_ratio = 4
-        self.conv10_ra = GhostBottleneck(
-            in_chs=self.ra_encoder.channels[3],
-            mid_chs=hidden_dim_ra_2,
-            out_chs=self.ra_encoder.channels[3],
-            kernel_size=3,
-            stride=1,
-            norm_layer=self.norm_layer
-        )
-        # <--- MODIFIED BLOCK END --->
+        # We downsample the RA view on the azimuth dimension to match the size of AD and RD view
+        self.down_sample_ra_view_skip_connection1 = nn.AvgPool2d(kernel_size=(1, 2))
+        self.up_sample_rd_ad_views_skip_connection1 = nn.Upsample(scale_factor=(1, 2))
 
-        self.conv_t3_ra = nn.ConvTranspose2d(self.ra_encoder.channels[3],
-                                             self.ra_encoder.channels[1], 2, 2)
+        # Decoding
+        self.rd_decoder = RecordDecoder(config=config['decoder_rd_config'], n_class=self.n_classes)
+        self.ra_decoder = RecordDecoder(config=config['decoder_ra_config'], n_class=self.n_classes)
 
-        # <--- MODIFIED BLOCK START --->
-        hidden_dim_ra_3 = int(round(self.ra_encoder.channels[1] * 4))  # expand_ratio = 4
-        self.conv11_ra = GhostBottleneck(
-            in_chs=self.ra_encoder.channels[1],
-            mid_chs=hidden_dim_ra_3,
-            out_chs=self.ra_encoder.channels[1],
-            kernel_size=3,
-            stride=1,
-            norm_layer=self.norm_layer
-        )
-        # <--- MODIFIED BLOCK END --->
+    def forward(self, x_rd, x_ra, x_ad):
+        """
+        Forward pass MV-RECORD model
+        @param x_rd: RD input tensor with shape (B, C, T, H, W) where T is the number of timesteps
+        @param x_ra: RA input tensor with shape (B, C, T, H, W) where T is the number of timesteps
+        @param x_ad: AD input tensor with shape (B, C, T, H, W) where T is the number of timesteps
+        @return: RD and RA segmentation masks of the last time step with shape (B, n_class, H, W)
+        """
+        # Backbone
+        st_features_backbone_rd, st_features_lstm2_rd, st_features_lstm1_rd = self.rd_encoder(x_rd)
+        st_features_backbone_ra, st_features_lstm2_ra, st_features_lstm1_ra = self.ra_encoder(x_ra)
+        st_features_backbone_ad, st_features_lstm2_ad, st_features_lstm1_ad = self.ad_encoder(x_ad)
 
-        self.conv_t4_ra = nn.ConvTranspose2d(self.ra_encoder.channels[1],
-                                             self.ra_encoder.channels[0], 2, 2)
+        # Concat latent spaces of each view
+        rd_ad_ra_latent_space = torch.cat((st_features_backbone_rd,
+                                           st_features_backbone_ra,
+                                           st_features_backbone_ad), dim=1)
 
-        # <--- MODIFIED BLOCK START --->
-        hidden_dim_ra_4 = int(round(self.ra_encoder.channels[0] * 1))  # expand_ratio = 1
-        self.conv12_ra = GhostBottleneck(
-            in_chs=self.ra_encoder.channels[0],
-            mid_chs=hidden_dim_ra_4,
-            out_chs=self.ra_encoder.channels[0],
-            kernel_size=3,
-            stride=1,
-            norm_layer=self.norm_layer
-        )
-        # <--- MODIFIED BLOCK END --->
 
-        self.head_ra = nn.Conv2d(self.ra_encoder.channels[0], self.n_classes, 1)
+        # Latent space for skip connection 2 - Range Doppler and Range Angle view (h_kskip_1 in the paper)
+        # Concatenate
+        latent_rd_ad_ra_skip_connection_2 = torch.cat((st_features_lstm2_rd,
+                                                       st_features_lstm2_ra,
+                                                       st_features_lstm2_ad), dim=1)
+        # Reduce # channels
+        latent_rd_ad_ra_skip_connection_2 = self.skip_connection_lstm2_conv(latent_rd_ad_ra_skip_connection_2)
 
-        self.conv_t1_rd = nn.ConvTranspose2d(self.rd_encoder.channels[7] * 3,
-                                             self.rd_encoder.channels[5], 2, 2)
+        # Latent space for skip connection 1 (h_kskip_0 in the paper)
+        # Skip connection for RD decoder - Down sample features map from RA view to match sizes of AD and RD views
+        latent_skip_connection1_rd = torch.cat((st_features_lstm1_rd,
+                                                self.down_sample_ra_view_skip_connection1(st_features_lstm1_ra),
+                                                st_features_lstm1_ad), dim=1)
+        latent_skip_connection1_rd = self.skip_connection_lstm1_conv(latent_skip_connection1_rd)
 
-        # <--- MODIFIED BLOCK START --->
-        hidden_dim_rd = int(round(self.rd_encoder.channels[5] * 4))  # expand_ratio = 4
-        self.conv9_rd = GhostBottleneck(
-            in_chs=self.rd_encoder.channels[5],
-            mid_chs=hidden_dim_rd,
-            out_chs=self.rd_encoder.channels[5],
-            kernel_size=3,
-            stride=1,
-            norm_layer=self.norm_layer
-        )
-        # <--- MODIFIED BLOCK END --->
+        # Skip connection for RA decoder - Up sample features maps from RD and AD view to match sizes of RA view
+        latent_skip_connection1_ra = torch.cat((self.up_sample_rd_ad_views_skip_connection1(st_features_lstm1_rd),
+                                  st_features_lstm1_ra,
+                                  self.up_sample_rd_ad_views_skip_connection1(st_features_lstm1_ad)), dim=1)
+        latent_skip_connection1_ra = self.skip_connection_lstm1_conv(latent_skip_connection1_ra)
 
-        self.conv_t2_rd = nn.ConvTranspose2d(self.rd_encoder.channels[5],
-                                             self.rd_encoder.channels[3], 2, 2)
+        # Decode
+        pred_rd = self.rd_decoder(rd_ad_ra_latent_space, latent_rd_ad_ra_skip_connection_2, latent_skip_connection1_rd)
+        pred_ra = self.ra_decoder(rd_ad_ra_latent_space, latent_rd_ad_ra_skip_connection_2, latent_skip_connection1_ra)
 
-        # <--- MODIFIED BLOCK START --->
-        hidden_dim_rd_2 = int(round(self.rd_encoder.channels[3] * 4))  # expand_ratio = 4
-        self.conv10_rd = GhostBottleneck(
-            in_chs=self.rd_encoder.channels[3],
-            mid_chs=hidden_dim_rd_2,
-            out_chs=self.rd_encoder.channels[3],
-            kernel_size=3,
-            stride=1,
-            norm_layer=self.norm_layer
-        )
-        # <--- MODIFIED BLOCK END --->
-
-        self.conv_t3_rd = nn.ConvTranspose2d(self.rd_encoder.channels[3],
-                                             self.rd_encoder.channels[1], 2, 2)
-
-        # <--- MODIFIED BLOCK START --->
-        hidden_dim_rd_3 = int(round(self.rd_encoder.channels[1] * 4))  # expand_ratio = 4
-        self.conv11_rd = GhostBottleneck(
-            in_chs=self.rd_encoder.channels[1],
-            mid_chs=hidden_dim_rd_3,
-            out_chs=self.rd_encoder.channels[1],
-            kernel_size=3,
-            stride=1,
-            norm_layer=self.norm_layer
-        )
-        # <--- MODIFIED BLOCK END --->
-
-        self.conv_t4_rd = nn.ConvTranspose2d(self.rd_encoder.channels[1],
-                                             self.rd_encoder.channels[0], 2, 2)
-
-        # <--- MODIFIED BLOCK START --->
-        hidden_dim_rd_4 = int(round(self.rd_encoder.channels[0] * 1))  # expand_ratio = 1
-        self.conv12_rd = GhostBottleneck(
-            in_chs=self.rd_encoder.channels[0],
-            mid_chs=hidden_dim_rd_4,
-            out_chs=self.rd_encoder.channels[0],
-            kernel_size=3,
-            stride=1,
-            norm_layer=self.norm_layer
-        )
-        # <--- MODIFIED BLOCK END --->
-
-        self.head_rd = nn.Conv2d(self.rd_encoder.channels[0], self.n_classes, 1)
-
-    def forward(self, x):
-        ra, rd, ad = x
-        b, f, c, h, w = ra.shape
-        ra = ra.reshape(b * f, c, h, w)
-        rd = rd.reshape(b * f, c, h, w)
-        ad = ad.reshape(b * f, c, h, w)
-
-        x_ra = self.ra_encoder.conv1(ra)
-        x_ra = self.ra_encoder.conv2(x_ra)
-        x_ra = self.ra_encoder.conv3(x_ra)
-        x_ra_e_1 = self.ra_encoder.conv4(x_ra)
-        h1_ra, c1_ra = self.ra_encoder.states[0]
-        h1_ra, c1_ra = self.ra_encoder.lstm1(x_ra_e_1, (h1_ra, c1_ra))
-        x_ra_e_1_lstm = h1_ra
-        x_ra = self.ra_encoder.conv5(x_ra_e_1_lstm)
-        x_ra_e_2 = self.ra_encoder.conv6(x_ra)
-        h2_ra, c2_ra = self.ra_encoder.states[1]
-        h2_ra, c2_ra = self.ra_encoder.lstm2(x_ra_e_2, (h2_ra, c2_ra))
-        x_ra_e_2_lstm = h2_ra
-        x_ra = self.ra_encoder.conv7(x_ra_e_2_lstm)
-        x_ra = self.ra_encoder.conv8(x_ra)
-
-        x_rd = self.rd_encoder.conv1(rd)
-        x_rd = self.rd_encoder.conv2(x_rd)
-        x_rd = self.rd_encoder.conv3(x_rd)
-        x_rd_e_1 = self.rd_encoder.conv4(x_rd)
-        h1_rd, c1_rd = self.rd_encoder.states[0]
-        h1_rd, c1_rd = self.rd_encoder.lstm1(x_rd_e_1, (h1_rd, c1_rd))
-        x_rd_e_1_lstm = h1_rd
-        x_rd = self.rd_encoder.conv5(x_rd_e_1_lstm)
-        x_rd_e_2 = self.rd_encoder.conv6(x_rd)
-        h2_rd, c2_rd = self.rd_encoder.states[1]
-        h2_rd, c2_rd = self.rd_encoder.lstm2(x_rd_e_2, (h2_rd, c2_rd))
-        x_rd_e_2_lstm = h2_rd
-        x_rd = self.rd_encoder.conv7(x_rd_e_2_lstm)
-        x_rd = self.rd_encoder.conv8(x_rd)
-
-        x_ad = self.ad_encoder.conv1(ad)
-        x_ad = self.ad_encoder.conv2(x_ad)
-        x_ad = self.ad_encoder.conv3(x_ad)
-        x_ad_e_1 = self.ad_encoder.conv4(x_ad)
-        h1_ad, c1_ad = self.ad_encoder.states[0]
-        h1_ad, c1_ad = self.ad_encoder.lstm1(x_ad_e_1, (h1_ad, c1_ad))
-        x_ad_e_1_lstm = h1_ad
-        x_ad = self.ad_encoder.conv5(x_ad_e_1_lstm)
-        x_ad_e_2 = self.ad_encoder.conv6(x_ad)
-        h2_ad, c2_ad = self.ad_encoder.states[1]
-        h2_ad, c2_ad = self.ad_encoder.lstm2(x_ad_e_2, (h2_ad, c2_ad))
-        x_ad_e_2_lstm = h2_ad
-        x_ad = self.ad_encoder.conv7(x_ad_e_2_lstm)
-        x_ad = self.ad_encoder.conv8(x_ad)
-
-        x = torch.cat((x_ra, x_rd, x_ad), dim=1)
-
-        x_ra = self.conv_t1_ra(x)
-        x_ra = x_ra + x_ra_e_2_lstm
-        x_ra = self.conv9_ra(x_ra)
-        x_ra = self.conv_t2_ra(x_ra)
-        x_ra = x_ra + x_ra_e_1_lstm
-        x_ra = self.conv10_ra(x_ra)
-        x_ra = self.conv_t3_ra(x_ra)
-        x_ra = self.conv11_ra(x_ra)
-        x_ra = self.conv_t4_ra(x_ra)
-        x_ra = self.conv12_ra(x_ra)
-
-        x_rd = self.conv_t1_rd(x)
-        x_rd = x_rd + x_rd_e_2_lstm
-        x_rd = self.conv9_rd(x_rd)
-        x_rd = self.conv_t2_rd(x_rd)
-        x_rd = x_rd + x_rd_e_1_lstm
-        x_rd = self.conv10_rd(x_rd)
-        x_rd = self.conv_t3_rd(x_rd)
-        x_rd = self.conv11_rd(x_rd)
-        x_rd = self.conv_t4_rd(x_rd)
-        x_rd = self.conv12_rd(x_rd)
-
-        x_ra = self.head_ra(x_ra)
-        x_rd = self.head_rd(x_rd)
-        self.ra_encoder.states = ((h1_ra.detach(), c1_ra.detach()), (h2_ra.detach(), c2_ra.detach()))
-        self.rd_encoder.states = ((h1_rd.detach(), c1_rd.detach()), (h2_rd.detach(), c2_rd.detach()))
-        self.ad_encoder.states = ((h1_ad.detach(), c1_ad.detach()), (h2_ad.detach(), c2_ad.detach()))
-        return x_ra, x_rd
+        return pred_rd, pred_ra
