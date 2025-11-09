@@ -1,6 +1,26 @@
+# utils/models_utils.py
+# ----------------------------------------------------------------
+import torch.nn as nn
+from functools import partial
 from typing import Any, Callable, Dict, Optional, Tuple, TypeVar, Union
 import yaml 
 
+def get_norm_layer(norm: str) -> Callable:
+    """
+    Return the normalization layer constructor
+    @param norm: (str) normalization type (batchnorm, layernorm, groupnorm)
+    @return: normalization layer constructor
+    """
+    if norm == 'batchnorm':
+        return nn.BatchNorm2d
+    elif norm == 'layernorm':
+        # Use GroupNorm with 1 group as a LayerNorm drop-in for CNNs
+        return partial(nn.GroupNorm, 1)
+    elif norm == 'groupnorm':
+        # Default to 32 groups for GroupNorm, a common setting
+        return partial(nn.GroupNorm, 32)
+    else:
+        raise ValueError(f"Unknown normalization layer: {norm}")
 
 def get_models(config):
     """
@@ -52,3 +72,7 @@ def _make_divisible(v: float, divisor: int, min_value: Optional[int] = None) -> 
     if new_v < 0.9 * v:
         new_v += divisor
     return int(new_v)
+
+# ---
+# 移除了原有的 "from utils.models_utils import get_norm_layer" 这一行错误代码
+# ---
