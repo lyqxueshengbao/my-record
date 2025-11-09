@@ -5,7 +5,7 @@ import torch.nn as nn
 from .layers.bottleneck_lstm import BottleneckLSTM
 from .layers.ghost_module import GhostBottleneck  # <--- MODIFIED: 导入 GhostBottleneck
 # from .layers.inverted_residual import InvertedResidual # <--- MODIFIED: 移除 InvertedResidual
-from utils.models_utils import get_norm_layer
+from utils import get_norm_layer
 
 
 class RECORD_OI(nn.Module):
