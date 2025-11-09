@@ -2,9 +2,15 @@ import pytorch_lightning as pl
 import torch
 from torch import nn
 
-from .layers.inverted_residual import Conv3x3ReLUNorm, InvertedResidual
+# --- 修改开始 ---
+from .layers.inverted_residual import Conv3x3ReLUNorm
+# from .layers.inverted_residual import Conv3x3ReLUNorm, InvertedResidual # 旧的
+from .layers.ghost_block import GhostBottleneck  # 新的
+# --- 修改结束 ---
+
 from .layers.bottleneck_lstm import BottleneckLSTM
 from utils.models_utils import _make_divisible
+
 
 def build_model(model_config, alpha=1.0, norm_type='layer'):
     layers = []
@@ -15,12 +21,12 @@ def build_model(model_config, alpha=1.0, norm_type='layer'):
         # If addition (for skip connections), then evaluate expression
         if isinstance(in_channels, str):
             in_channels = eval(in_channels)
-        in_channels = _make_divisible(in_channels*alpha, 8.0)
+        in_channels = _make_divisible(in_channels * alpha, 8.0)
         out_channels = layer['out_channels']
         # If addition (for skip connection), then evaluate expression
         if isinstance(out_channels, str):
             out_channels = eval(out_channels)
-        out_channels = _make_divisible(out_channels*alpha, 8.0)
+        out_channels = _make_divisible(out_channels * alpha, 8.0)
         stride = layer['stride']
         if layer['use_norm']:
             norm = norm_type
@@ -34,14 +40,29 @@ def build_model(model_config, alpha=1.0, norm_type='layer'):
             padding = layer['padding']
             layers.append(nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size,
                                     stride=stride, padding=padding))
-        elif layer_type == 'inverted_residual':
+
+        # --- 修改开始 ---
+        # elif layer_type == 'inverted_residual':
+        elif layer_type == 'ghost_bottleneck':  # 更改类型名称
             expansion_factor = layer['expansion_factor']
             num_block = layer['num_block']
-            layers.append(InvertedResidual(in_channels=in_channels, out_channels=out_channels, expansion_factor=expansion_factor,
-                                           stride=stride, norm=norm))
+            hidden_dim = in_channels * expansion_factor  # GhostBottleneck 需要 hidden_dim
+            dw_kernel_size = layer.get('dw_kernel_size', 3)  # 默认为 3
+
+            # layers.append(InvertedResidual(in_channels=in_channels, out_channels=out_channels, expansion_factor=expansion_factor,
+            #                                stride=stride, norm=norm))
+            layers.append(GhostBottleneck(in_channels=in_channels, hidden_dim=hidden_dim, out_channels=out_channels,
+                                          dw_kernel_size=dw_kernel_size, stride=stride, norm=norm))  # 替换
+
             for i in range(1, num_block):
-                layers.append(InvertedResidual(in_channels=out_channels, out_channels=out_channels, expansion_factor=expansion_factor,
-                                           stride=stride, norm=norm))
+                # layers.append(InvertedResidual(in_channels=out_channels, out_channels=out_channels, expansion_factor=expansion_factor,
+                #                            stride=stride, norm=norm))
+                hidden_dim = out_channels * expansion_factor
+                layers.append(
+                    GhostBottleneck(in_channels=out_channels, hidden_dim=hidden_dim, out_channels=out_channels,
+                                    dw_kernel_size=dw_kernel_size, stride=1, norm=norm))  # 替换
+        # --- 修改结束 ---
+
         elif layer_type == 'bottleneck_lstm':
             num_block = layer['num_block']
             layers.append(BottleneckLSTM(input_channels=in_channels, hidden_channels=out_channels, norm=norm))
@@ -51,8 +72,9 @@ def build_model(model_config, alpha=1.0, norm_type='layer'):
             kernel_size = layer['kernel_size']
             padding = layer['padding']
             output_padding = layer['output_padding']
-            layers.append(nn.ConvTranspose2d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size,
-                                             padding=padding, output_padding=output_padding, stride=stride))
+            layers.append(
+                nn.ConvTranspose2d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size,
+                                   padding=padding, output_padding=output_padding, stride=stride))
 
     return layers
 
@@ -111,19 +133,25 @@ class RecordEncoder(nn.Module):
                                        out_channels=config['in_conv']['out_channels'],
                                        stride=config['in_conv']['stride'], norm=norm)
 
+        # --- 修改开始 ---
         # IR block 1 (acts as a bottleneck)
-        self.ir_block1 = self._make_ir_block(in_channels=config['ir_block1']['in_channels'],
-                                             out_channels=config['ir_block1']['out_channels'],
-                                             num_block=config['ir_block1']['num_block'],
-                                             expansion_factor=config['ir_block1']['expansion_factor'],
-                                             stride=config['ir_block1']['stride'], use_norm=config['ir_block1']['use_norm'])
+        # self.ir_block1 = self._make_ir_block(in_channels=config['ir_block1']['in_channels'],
+        self.ir_block1 = self._make_ghost_block(in_channels=config['ir_block1']['in_channels'],  # 替换
+                                                out_channels=config['ir_block1']['out_channels'],
+                                                num_block=config['ir_block1']['num_block'],
+                                                expansion_factor=config['ir_block1']['expansion_factor'],
+                                                stride=config['ir_block1']['stride'],
+                                                use_norm=config['ir_block1']['use_norm'])
 
         # IR block 2 (extracts spatial features and decrease spatial dimension by a factor of 2)
-        self.ir_block2 = self._make_ir_block(in_channels=config['ir_block2']['in_channels'],
-                                             out_channels=config['ir_block2']['out_channels'],
-                                             num_block=config['ir_block2']['num_block'],
-                                             expansion_factor=config['ir_block2']['expansion_factor'],
-                                             stride=config['ir_block2']['stride'], use_norm=config['ir_block2']['use_norm'])
+        # self.ir_block2 = self._make_ir_block(in_channels=config['ir_block2']['in_channels'],
+        self.ir_block2 = self._make_ghost_block(in_channels=config['ir_block2']['in_channels'],  # 替换
+                                                out_channels=config['ir_block2']['out_channels'],
+                                                num_block=config['ir_block2']['num_block'],
+                                                expansion_factor=config['ir_block2']['expansion_factor'],
+                                                stride=config['ir_block2']['stride'],
+                                                use_norm=config['ir_block2']['use_norm'])
+        # --- 修改结束 ---
 
         # Bottleneck LSTM 1 (extract spatial and temporal features)
         lstm_norm = None if not config['bottleneck_lstm1']['use_norm'] else self.norm
@@ -131,12 +159,16 @@ class RecordEncoder(nn.Module):
                                                hidden_channels=config['bottleneck_lstm1']['out_channels'],
                                                norm=lstm_norm)
 
+        # --- 修改开始 ---
         # IR block 3 (extracts spatial features and decrease spatial dimension by a factor of 2)
-        self.ir_block3 = self._make_ir_block(in_channels=config['ir_block3']['in_channels'],
-                                             out_channels=config['ir_block3']['out_channels'],
-                                             num_block=config['ir_block3']['num_block'],
-                                             expansion_factor=config['ir_block3']['expansion_factor'],
-                                             stride=config['ir_block3']['stride'], use_norm=config['ir_block3']['use_norm'])
+        # self.ir_block3 = self._make_ir_block(in_channels=config['ir_block3']['in_channels'],
+        self.ir_block3 = self._make_ghost_block(in_channels=config['ir_block3']['in_channels'],  # 替换
+                                                out_channels=config['ir_block3']['out_channels'],
+                                                num_block=config['ir_block3']['num_block'],
+                                                expansion_factor=config['ir_block3']['expansion_factor'],
+                                                stride=config['ir_block3']['stride'],
+                                                use_norm=config['ir_block3']['use_norm'])
+        # --- 修改结束 ---
 
         # Bottleneck LSTM 2 (extract spatial and temporal features)
         lstm_norm = None if not config['bottleneck_lstm2']['use_norm'] else self.norm
@@ -144,13 +176,16 @@ class RecordEncoder(nn.Module):
                                                hidden_channels=config['bottleneck_lstm2']['out_channels'],
                                                norm=lstm_norm)
 
+        # --- 修改开始 ---
         # IR block 4 (extracts spatial features and decrease spatial dimension by a factor of 2)
-        self.ir_block4 = self._make_ir_block(in_channels=config['ir_block4']['in_channels'],
-                                             out_channels=config['ir_block4']['out_channels'],
-                                             num_block=config['ir_block4']['num_block'],
-                                             expansion_factor=config['ir_block4']['expansion_factor'],
-                                             stride=config['ir_block4']['stride'], use_norm=config['ir_block4']['use_norm'])
-
+        # self.ir_block4 = self._make_ir_block(in_channels=config['ir_block4']['in_channels'],
+        self.ir_block4 = self._make_ghost_block(in_channels=config['ir_block4']['in_channels'],  # 替换
+                                                out_channels=config['ir_block4']['out_channels'],
+                                                num_block=config['ir_block4']['num_block'],
+                                                expansion_factor=config['ir_block4']['expansion_factor'],
+                                                stride=config['ir_block4']['stride'],
+                                                use_norm=config['ir_block4']['use_norm'])
+        # --- 修改结束 ---
 
     def forward(self, x):
         """
@@ -174,9 +209,11 @@ class RecordEncoder(nn.Module):
 
         return st_features_backbone, st_features_lstm2, st_features_lstm1
 
-    def _make_ir_block(self, in_channels, out_channels, num_block, expansion_factor, stride, use_norm):
+    # --- 修改开始 ---
+    # def _make_ir_block(self, in_channels, out_channels, num_block, expansion_factor, stride, use_norm):
+    def _make_ghost_block(self, in_channels, out_channels, num_block, expansion_factor, stride, use_norm):  # 重命名
         """
-        Build an Inverted Residual bottleneck block
+        Build a Ghost Bottleneck block
         @param in_channels: number of input channels
         @param out_channels: number of output channels
         @param num_block: number of IR layer in the block
@@ -188,12 +225,26 @@ class RecordEncoder(nn.Module):
             norm = self.norm
         else:
             norm = None
-        layers = [InvertedResidual(in_channels=in_channels, out_channels=out_channels, stride=stride,
-                                   expansion_factor=expansion_factor, norm=norm)]
+
+        layers = []
+        hidden_dim = in_channels * expansion_factor
+        dw_kernel_size = 3  # 默认为 3
+
+        # layers = [InvertedResidual(in_channels=in_channels, out_channels=out_channels, stride=stride,
+        #                            expansion_factor=expansion_factor, norm=norm)]
+        layers.append(GhostBottleneck(in_channels=in_channels, hidden_dim=hidden_dim, out_channels=out_channels,
+                                      dw_kernel_size=dw_kernel_size, stride=stride, norm=norm))  # 替换
+
         for i in range(1, num_block):
-            layers.append(InvertedResidual(in_channels=out_channels, out_channels=out_channels, stride=1,
-                                           expansion_factor=expansion_factor,  norm=norm))
+            hidden_dim = out_channels * expansion_factor
+            # layers.append(InvertedResidual(in_channels=out_channels, out_channels=out_channels, stride=1,
+            #                                expansion_factor=expansion_factor,  norm=norm))
+            layers.append(GhostBottleneck(in_channels=out_channels, hidden_dim=hidden_dim, out_channels=out_channels,
+                                          dw_kernel_size=dw_kernel_size, stride=1, norm=norm))  # 替换
+
         return nn.Sequential(*layers)
+
+    # --- 修改结束 ---
 
     def __init_hidden__(self):
         """
@@ -226,14 +277,25 @@ class RecordDecoder(nn.Module):
                                            stride=config['conv_transpose1']['stride'],
                                            output_padding=config['conv_transpose1']['output_padding'],
                                            padding=config['conv_transpose1']['padding'])
+
+        # --- 修改开始 ---
         # Evaluate the sum of channels of the # channels of up_conv1 and # channels of the last hidden states of second
         # LSTM for the skip connection
         conv_norm = None if not config['conv_skip1']['use_norm'] else norm_decoder
-        self.conv_skip_connection1 = InvertedResidual(in_channels=config['conv_skip1']['in_channels'],
-                                                      out_channels=config['conv_skip1']['out_channels'],
-                                                      expansion_factor=config['conv_skip1']['expansion_factor'],
-                                                      stride=config['conv_skip1']['stride'],
-                                                      norm=conv_norm)
+        hidden_dim = config['conv_skip1']['in_channels'] * config['conv_skip1']['expansion_factor']
+        dw_kernel_size = config['conv_skip1'].get('dw_kernel_size', 3)
+        # self.conv_skip_connection1 = InvertedResidual(in_channels=config['conv_skip1']['in_channels'],
+        #                                               out_channels=config['conv_skip1']['out_channels'],
+        #                                               expansion_factor=config['conv_skip1']['expansion_factor'],
+        #                                               stride=config['conv_skip1']['stride'],
+        #                                               norm=conv_norm)
+        self.conv_skip_connection1 = GhostBottleneck(in_channels=config['conv_skip1']['in_channels'],
+                                                     hidden_dim=hidden_dim,
+                                                     out_channels=config['conv_skip1']['out_channels'],
+                                                     dw_kernel_size=dw_kernel_size,
+                                                     stride=config['conv_skip1']['stride'],
+                                                     norm=conv_norm)  # 替换
+        # --- 修改结束 ---
 
         self.up_conv2 = nn.ConvTranspose2d(in_channels=config['conv_transpose2']['in_channels'],
                                            out_channels=config['conv_transpose2']['out_channels'],
@@ -241,14 +303,25 @@ class RecordDecoder(nn.Module):
                                            stride=config['conv_transpose2']['stride'],
                                            output_padding=config['conv_transpose2']['output_padding'],
                                            padding=config['conv_transpose2']['padding'])
+
+        # --- 修改开始 ---
         # Evaluate the sum of channels of the # channels of up_conv2 and # channels of the last hidden states of first
         # LSTM for the skip connection
         conv_norm = None if not config['conv_skip2']['use_norm'] else norm_decoder
-        self.conv_skip_connection2 = InvertedResidual(in_channels=config['conv_skip2']['in_channels'],
-                                                      out_channels=config['conv_skip2']['out_channels'],
-                                                      expansion_factor=config['conv_skip2']['expansion_factor'],
-                                                      stride=config['conv_skip2']['stride'],
-                                                      norm=conv_norm)
+        hidden_dim = config['conv_skip2']['in_channels'] * config['conv_skip2']['expansion_factor']
+        dw_kernel_size = config['conv_skip2'].get('dw_kernel_size', 3)
+        # self.conv_skip_connection2 = InvertedResidual(in_channels=config['conv_skip2']['in_channels'],
+        #                                               out_channels=config['conv_skip2']['out_channels'],
+        #                                               expansion_factor=config['conv_skip2']['expansion_factor'],
+        #                                               stride=config['conv_skip2']['stride'],
+        #                                               norm=conv_norm)
+        self.conv_skip_connection2 = GhostBottleneck(in_channels=config['conv_skip2']['in_channels'],
+                                                     hidden_dim=hidden_dim,
+                                                     out_channels=config['conv_skip2']['out_channels'],
+                                                     dw_kernel_size=dw_kernel_size,
+                                                     stride=config['conv_skip2']['stride'],
+                                                     norm=conv_norm)  # 替换
+        # --- 修改结束 ---
 
         self.up_conv3 = nn.ConvTranspose2d(in_channels=config['conv_transpose3']['in_channels'],
                                            out_channels=config['conv_transpose3']['out_channels'],
@@ -257,17 +330,27 @@ class RecordDecoder(nn.Module):
                                            output_padding=config['conv_transpose3']['output_padding'],
                                            padding=config['conv_transpose3']['padding'])
 
+        # --- 修改开始 ---
         conv_norm = None if not config['conv_skip3']['use_norm'] else norm_decoder
-        self.conv_skip_connection3 = InvertedResidual(in_channels=config['conv_skip3']['in_channels'],
-                                                      out_channels=config['conv_skip3']['out_channels'],
-                                                      expansion_factor=config['conv_skip3']['expansion_factor'],
-                                                      stride=config['conv_skip3']['stride'],
-                                                      norm=conv_norm)
+        hidden_dim = config['conv_skip3']['in_channels'] * config['conv_skip3']['expansion_factor']
+        dw_kernel_size = config['conv_skip3'].get('dw_kernel_size', 3)
+        # self.conv_skip_connection3 = InvertedResidual(in_channels=config['conv_skip3']['in_channels'],
+        #                                               out_channels=config['conv_skip3']['out_channels'],
+        #                                               expansion_factor=config['conv_skip3']['expansion_factor'],
+        #                                               stride=config['conv_skip3']['stride'],
+        #                                               norm=conv_norm)
+        self.conv_skip_connection3 = GhostBottleneck(in_channels=config['conv_skip3']['in_channels'],
+                                                     hidden_dim=hidden_dim,
+                                                     out_channels=config['conv_skip3']['out_channels'],
+                                                     dw_kernel_size=dw_kernel_size,
+                                                     stride=config['conv_skip3']['stride'],
+                                                     norm=conv_norm)  # 替换
+        # --- 修改结束 ---
 
         conv_norm = None if not config['conv_head1']['use_norm'] else norm_decoder
         self.conv_head1 = Conv3x3ReLUNorm(in_channels=config['conv_head1']['in_channels'],
-                            out_channels=config['conv_head1']['out_channels'],
-                            stride=config['conv_head1']['stride'], norm=conv_norm)
+                                          out_channels=config['conv_head1']['out_channels'],
+                                          stride=config['conv_head1']['stride'], norm=conv_norm)
         self.conv_head2 = nn.Conv2d(in_channels=config['conv_head2']['in_channels'],
                                     out_channels=config['conv_head2']['out_channels'],
                                     kernel_size=config['conv_head2']['kernel_size'],
@@ -295,4 +378,3 @@ class RecordDecoder(nn.Module):
         x = self.conv_head1(x)
         x = self.conv_head2(x)
         return x
-

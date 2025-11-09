@@ -1,6 +1,12 @@
 from torch import nn
 from .record import RecordDecoder
-from .layers.inverted_residual import Conv3x3ReLUNorm, InvertedResidual
+# --- 修改开始 ---
+from .layers.inverted_residual import Conv3x3ReLUNorm
+# from .layers.inverted_residual import Conv3x3ReLUNorm, InvertedResidual # 旧的
+from .layers.ghost_block import GhostBottleneck  # 新的
+
+
+# --- 修改结束 ---
 
 class RecordEncoderNoLstm(nn.Module):
     def __init__(self, in_channels, config, norm='layer'):
@@ -22,35 +28,43 @@ class RecordEncoderNoLstm(nn.Module):
                                        out_channels=config['in_conv']['out_channels'],
                                        stride=config['in_conv']['stride'], norm=norm)
 
+        # --- 修改开始 ---
         # IR block 1 (acts as a bottleneck)
-        self.ir_block1 = self._make_ir_block(in_channels=config['ir_block1']['in_channels'],
-                                             out_channels=config['ir_block1']['out_channels'],
-                                             num_block=config['ir_block1']['num_block'],
-                                             expansion_factor=config['ir_block1']['expansion_factor'],
-                                             stride=config['ir_block1']['stride'], use_norm=config['ir_block1']['use_norm'])
+        # self.ir_block1 = self._make_ir_block(in_channels=config['ir_block1']['in_channels'],
+        self.ir_block1 = self._make_ghost_block(in_channels=config['ir_block1']['in_channels'],  # 替换
+                                                out_channels=config['ir_block1']['out_channels'],
+                                                num_block=config['ir_block1']['num_block'],
+                                                expansion_factor=config['ir_block1']['expansion_factor'],
+                                                stride=config['ir_block1']['stride'],
+                                                use_norm=config['ir_block1']['use_norm'])
 
         # IR block 2 (extracts spatial features and decrease spatial dimension by a factor of 2)
-        self.ir_block2 = self._make_ir_block(in_channels=config['ir_block2']['in_channels'],
-                                             out_channels=config['ir_block2']['out_channels'],
-                                             num_block=config['ir_block2']['num_block'],
-                                             expansion_factor=config['ir_block2']['expansion_factor'],
-                                             stride=config['ir_block2']['stride'], use_norm=config['ir_block2']['use_norm'])
+        # self.ir_block2 = self._make_ir_block(in_channels=config['ir_block2']['in_channels'],
+        self.ir_block2 = self._make_ghost_block(in_channels=config['ir_block2']['in_channels'],  # 替换
+                                                out_channels=config['ir_block2']['out_channels'],
+                                                num_block=config['ir_block2']['num_block'],
+                                                expansion_factor=config['ir_block2']['expansion_factor'],
+                                                stride=config['ir_block2']['stride'],
+                                                use_norm=config['ir_block2']['use_norm'])
 
         # IR block 3 (extracts spatial features and decrease spatial dimension by a factor of 2)
-        self.ir_block3 = self._make_ir_block(in_channels=config['ir_block3']['in_channels'],
-                                             out_channels=config['ir_block3']['out_channels'],
-                                             num_block=config['ir_block3']['num_block'],
-                                             expansion_factor=config['ir_block3']['expansion_factor'],
-                                             stride=config['ir_block3']['stride'], use_norm=config['ir_block3']['use_norm'])
-
+        # self.ir_block3 = self._make_ir_block(in_channels=config['ir_block3']['in_channels'],
+        self.ir_block3 = self._make_ghost_block(in_channels=config['ir_block3']['in_channels'],  # 替换
+                                                out_channels=config['ir_block3']['out_channels'],
+                                                num_block=config['ir_block3']['num_block'],
+                                                expansion_factor=config['ir_block3']['expansion_factor'],
+                                                stride=config['ir_block3']['stride'],
+                                                use_norm=config['ir_block3']['use_norm'])
 
         # IR block 4 (extracts spatial features and decrease spatial dimension by a factor of 2)
-        self.ir_block4 = self._make_ir_block(in_channels=config['ir_block4']['in_channels'],
-                                             out_channels=config['ir_block4']['out_channels'],
-                                             num_block=config['ir_block4']['num_block'],
-                                             expansion_factor=config['ir_block4']['expansion_factor'],
-                                             stride=config['ir_block4']['stride'], use_norm=config['ir_block4']['use_norm'])
-
+        # self.ir_block4 = self._make_ir_block(in_channels=config['ir_block4']['in_channels'],
+        self.ir_block4 = self._make_ghost_block(in_channels=config['ir_block4']['in_channels'],  # 替换
+                                                out_channels=config['ir_block4']['out_channels'],
+                                                num_block=config['ir_block4']['num_block'],
+                                                expansion_factor=config['ir_block4']['expansion_factor'],
+                                                stride=config['ir_block4']['stride'],
+                                                use_norm=config['ir_block4']['use_norm'])
+        # --- 修改结束 ---
 
     def forward(self, x):
         """
@@ -66,9 +80,11 @@ class RecordEncoderNoLstm(nn.Module):
 
         return x3, x2, x1
 
-    def _make_ir_block(self, in_channels, out_channels, num_block, expansion_factor, stride, use_norm):
+    # --- 修改开始 ---
+    # def _make_ir_block(self, in_channels, out_channels, num_block, expansion_factor, stride, use_norm):
+    def _make_ghost_block(self, in_channels, out_channels, num_block, expansion_factor, stride, use_norm):  # 重命名
         """
-        Build an Inverted Residual bottleneck block
+        Build an Ghost Bottleneck block
         @param in_channels: number of input channels
         @param out_channels: number of output channels
         @param num_block: number of IR layer in the block
@@ -80,12 +96,25 @@ class RecordEncoderNoLstm(nn.Module):
             norm = self.norm
         else:
             norm = None
-        layers = [InvertedResidual(in_channels=in_channels, out_channels=out_channels, stride=stride,
-                                   expansion_factor=expansion_factor, norm=norm)]
+
+        layers = []
+        hidden_dim = in_channels * expansion_factor
+        dw_kernel_size = 3  # 默认为 3
+
+        # layers = [InvertedResidual(in_channels=in_channels, out_channels=out_channels, stride=stride,
+        #                            expansion_factor=expansion_factor, norm=norm)]
+        layers.append(GhostBottleneck(in_channels=in_channels, hidden_dim=hidden_dim, out_channels=out_channels,
+                                      dw_kernel_size=dw_kernel_size, stride=stride, norm=norm))  # 替换
+
         for i in range(1, num_block):
-            layers.append(InvertedResidual(in_channels=out_channels, out_channels=out_channels, stride=1,
-                                           expansion_factor=expansion_factor,  norm=norm))
+            hidden_dim = out_channels * expansion_factor
+            # layers.append(InvertedResidual(in_channels=out_channels, out_channels=out_channels, stride=1,
+            #                                expansion_factor=expansion_factor,  norm=norm))
+            layers.append(GhostBottleneck(in_channels=out_channels, hidden_dim=hidden_dim, out_channels=out_channels,
+                                          dw_kernel_size=dw_kernel_size, stride=1, norm=norm))  # 替换
+
         return nn.Sequential(*layers)
+    # --- 修改结束 ---
 
 
 class RecordNoLstm(nn.Module):
@@ -111,4 +140,3 @@ class RecordNoLstm(nn.Module):
         x3, x2, x1 = self.encoder(x)
         confmap_pred = self.decoder(x3, x2, x1)
         return self.sigmoid(confmap_pred)
-
