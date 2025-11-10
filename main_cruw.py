@@ -121,7 +121,7 @@ trainer = pl.Trainer(
     gradient_clip_algorithm='norm',
     detect_anomaly=False,  # 生产环境关闭，调试时可开启
     # 🔧 修改7: 添加精度控制
-    precision='32-true'  # 使用完整精度，避免混合精度导致的不稳定
+    precision='32'  # 使用完整精度，避免混合精度导致的不稳定
 )
 
 print(f'🚀 开始训练 (Seed: {seed}, Deterministic: {deterministic})')
