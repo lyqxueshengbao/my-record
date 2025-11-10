@@ -26,7 +26,7 @@ def parse_args():
 
 
 args = parse_args()
-deterministic = False
+deterministic = True
 
 
 seed = 252 if args.seed is None else args.seed
