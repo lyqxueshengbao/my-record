@@ -6,7 +6,7 @@ from .layers.inverted_residual import Conv3x3ReLUNorm, InvertedResidual
 from .layers.bottleneck_lstm import BottleneckLSTM
 from utils.models_utils import _make_divisible
 
-def build_model(model_config, alpha=1.0, norm_type='layer'):
+def build_model(model_config, alpha=1.0, norm_type='rms'): # <-- 默认改为 'rms'
     layers = []
     for layer_name in model_config:
         layer = model_config[layer_name]
@@ -58,19 +58,20 @@ def build_model(model_config, alpha=1.0, norm_type='layer'):
 
 
 class Record(nn.Module):
-    def __init__(self, config, in_channels=8, norm='layer', n_class=3):
+    def __init__(self, config, in_channels=8, norm='rms', n_class=3): # <-- 默认改为 'rms'
         """
         RECurrent Online object detectOR (RECORD) model class
         @param config: configuration file of the model
         @param alpha: expansion factor to modify the size of the model (default: 1.0)
         @param in_channels: number of input channels (default: 8)
-        @param norm: type of normalisation (default: LayerNorm). Other normalisation are not supported yet.
+        @param norm: type of normalisation (default: RMSNorm). Other normalisation are not supported yet.
         @param n_class: number of classes (default: 3)
         @param shallow: load a shallow version of RECORD (fewer channels in the decoder)
         """
         super(Record, self).__init__()
         self.encoder = RecordEncoder(config=config['encoder_config'], in_channels=in_channels, norm=norm)
-        self.decoder = RecordDecoder(config=config['decoder_config'], n_class=n_class)
+        # 将 norm 传递给 Decoder
+        self.decoder = RecordDecoder(config=config['decoder_config'], n_class=n_class, norm_decoder=norm)
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
@@ -92,12 +93,12 @@ class Record(nn.Module):
 
 
 class RecordEncoder(nn.Module):
-    def __init__(self, in_channels, config, norm='layer'):
+    def __init__(self, in_channels, config, norm='rms'): # <-- 默认改为 'rms'
         """
         RECurrent Online object detectOR (RECORD) features extractor.
         @param in_channels: number of input channels (default: 8)
         @param config: number of input channels per block
-        @param norm: type of normalisation (default: LayerNorm). Other normalisation are not supported yet.
+        @param norm: type of normalisation (default: RMSNorm). Other normalisation are not supported yet.
         """
         super(RecordEncoder, self).__init__()
         self.norm = norm
@@ -205,7 +206,7 @@ class RecordEncoder(nn.Module):
 
 
 class RecordDecoder(nn.Module):
-    def __init__(self, config, n_class, norm_decoder="layer"):
+    def __init__(self, config, n_class, norm_decoder="rms"): # <-- 默认改为 'rms'
         """
         RECurrent Online object detectOR (RECORD) decoder.
 
@@ -213,7 +214,7 @@ class RecordDecoder(nn.Module):
         @param n_class: number of output class
         @param alpha: expansion factor to modify the size of the model (default: 1.0)
         @param round_nearest: Round the number of channels in each layer to be a multiple of this number
-        @param norm_decoder: type of normalisation (default: LayerNorm). Other normalisation are not supported yet.
+        @param norm_decoder: type of normalisation (default: RMSNorm). Other normalisation are not supported yet.
         """
         super(RecordDecoder, self).__init__()
 
@@ -295,4 +296,3 @@ class RecordDecoder(nn.Module):
         x = self.conv_head1(x)
         x = self.conv_head2(x)
         return x
-
