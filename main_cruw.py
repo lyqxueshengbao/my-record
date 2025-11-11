@@ -13,7 +13,7 @@ from datasets import ROD2021Dataset
 from evaluation import eval_on_test, eval_on_val
 # ⬇️ 修正：保留你原始的导入
 from executors import RECORDExecutor as Model
-
+import datetime
 
 def parse_args():
     parser = argparse.ArgumentParser(description='RECORD model')
@@ -131,7 +131,7 @@ if accelerator == 'gpu':
         find_unused_parameters=False,
         gradient_as_bucket_view=True,
         static_graph=True,
-        timeout=1800
+        timeout=datetime.timedelta(seconds=1800)
     )
 else:
     strategy = 'auto'
