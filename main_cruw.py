@@ -86,9 +86,6 @@ train_cfg = config_dict['train_cfg']
 model = Model(model=model_instance, train_dataset=train_dataset, val_dataset=valid_dataset, config_dict=config_dict,
                  cruw_dataset_obj=dataset, save_dir=logger.log_dir)
 
-print("Compiling model with torch.compile()...")
-model = torch.compile(model)
-
 if torch.cuda.is_available():
     print('CUDA available, use GPU')
     accelerator = 'gpu'
@@ -96,7 +93,7 @@ else:
     print('WARNING: CUDA not available, use CPU')
     accelerator = 'cpu'
 trainer = pl.Trainer(logger=logger, callbacks=callbacks, accelerator=accelerator, strategy='ddp', devices=6,
-                     max_epochs=train_cfg['n_epoch'], deterministic=deterministic, precision=16)
+                     max_epochs=train_cfg['n_epoch'], deterministic=deterministic)
 
 print('Start training')
 trainer.fit(model, ckpt_path=args.resume_ckpt)
