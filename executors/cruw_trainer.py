@@ -150,10 +150,8 @@ class CruwExecutor(pl.LightningModule):
         image_paths = batch['image_paths']
         obj_infos = batch['anno']['obj_infos']
 
-        # confmap_pred 包含的是 logits (原始模型输出)
         confmap_pred = self.forward(ra_maps)
 
-        # self.loss_fct (BCEWithLogitsLoss) 正确地处理 logits
         loss = self.loss_fct(confmap_pred, confmap_gts)
 
         self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True,
@@ -195,29 +193,14 @@ class CruwExecutor(pl.LightningModule):
             for tmp_frame_id in range(frame_id):
                 print("Eval frame", tmp_frame_id)
                 tmp_ra_maps = ra_maps[:, :, :tmp_frame_id + 1]
-
-                # ------ 修改点 1 ------
-                # 1. 从模型获取 logits
-                confmap_pred_logits = self.forward(tmp_ra_maps)
-                # 2. 将 logits 转换为概率 (probs)
-                confmap_pred_probs = torch.sigmoid(confmap_pred_logits)
-                # 3. 将 probs 传递给后处理
-                res_final = post_process_single_frame_cruw(confmap_pred_probs[0].cpu(), self.cruw_dataset_obj,
-                                                           self.config)
-                # ---------------------
-
+                confmap_pred = self.forward(tmp_ra_maps)
+                res_final = post_process_single_frame_cruw(confmap_pred[0].cpu(), self.cruw_dataset_obj, self.config)
                 write_dets_results_single_frame(res_final, tmp_frame_id, save_path, self.cruw_dataset_obj)
 
-        # ------ 修改点 2 ------
-        # 1. 从模型获取 logits
-        confmap_pred_logits = self.forward(ra_maps)
-        # 2. 将 logits 转换为概率 (probs)
-        confmap_pred_probs = torch.sigmoid(confmap_pred_logits)
-        # ---------------------
+        confmap_pred = self.forward(ra_maps)
 
         # Write results
-        # 3. 将 probs 传递给后处理
-        res_final = post_process_single_frame_cruw(confmap_pred_probs[0].cpu(), self.cruw_dataset_obj, self.config)
+        res_final = post_process_single_frame_cruw(confmap_pred[0].cpu(), self.cruw_dataset_obj, self.config)
         write_dets_results_single_frame(res_final, frame_id, save_path, self.cruw_dataset_obj)
 
     def evaluate_rodnet_seq_(self, res_path, gt_path, n_frame, subset):

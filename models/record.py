@@ -72,7 +72,7 @@ class Record(nn.Module):
         self.encoder = RecordEncoder(config=config['encoder_config'], in_channels=in_channels, norm=norm)
         # 将 norm 传递给 Decoder
         self.decoder = RecordDecoder(config=config['decoder_config'], n_class=n_class, norm_decoder=norm)
-        # self.sigmoid = nn.Sigmoid()
+        self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
         """
@@ -89,8 +89,7 @@ class Record(nn.Module):
             st_features_lstm1, st_features_lstm2, st_features_backbone = self.encoder(x[:, :, t])
 
         confmap_pred = self.decoder(st_features_lstm1, st_features_lstm2, st_features_backbone)
-        #return self.sigmoid(confmap_pred)
-        return confmap_pred
+        return self.sigmoid(confmap_pred)
 
 
 class RecordEncoder(nn.Module):
