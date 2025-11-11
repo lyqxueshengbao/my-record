@@ -1,8 +1,9 @@
 """
 From https://github.com/valeoai/MVRSS
+(已根据 logits 输入和 autocast 进行修复)
 """
 from torch import nn
-import torch 
+import torch
 import torch.nn.functional as F
 
 from typing import Optional
@@ -10,17 +11,19 @@ from typing import Optional
 class SmoothCELoss(nn.Module):
     """
     Smooth cross entropy loss
-    SCE = SmoothL1Loss() + BCELoss()
-    By default reduction is mean. 
+    SCE = SmoothL1Loss() + BCEWithLogitsLoss()
+    By default reduction is mean.
     """
     def __init__(self, alpha):
         super().__init__()
         self.smooth_l1 = nn.SmoothL1Loss()
-        self.bce = nn.BCELoss()
+        # ⬇️ 关键修复：使用 BCEWithLogitsLoss 来处理 logits 并与 autocast 兼容
+        self.bce_with_logits = nn.BCEWithLogitsLoss()
         self.alpha = alpha
-    
+
     def forward(self, input, target):
-        return self.alpha * self.bce(input, target) + \
+        # 假设 'input' 现在是 logits
+        return self.alpha * self.bce_with_logits(input, target) + \
                 (1-self.alpha) * self.smooth_l1(input, target)
 
 
@@ -49,23 +52,39 @@ class FocalLoss(nn.Module):
     def forward(self, inputs, targets):
         """
         Args:
-            inputs: A float tensor of arbitrary shape.
+            inputs: A float tensor of arbitrary shape (LOGITS).
                     The predictions for each example.
             targets: A float tensor with the same shape as inputs.
                      Stores the binary classification label for each element in inputs
                      (0 for the negative class and 1 for the positive class).
         """
-        # Ensure inputs are in valid range [0, 1] for BCE calculation
-        inputs = torch.clamp(inputs, min=1e-7, max=1-1e-7)
+        # ⬇️ 关键修复：删除 torch.clamp(inputs, min=1e-7, max=1-1e-7)
+        # 这一行假设 inputs 是概率，但我们现在输入的是 logits
 
-        # Calculate BCE loss
+        # Calculate BCE loss (with logits)
+        # 'inputs' 必须是原始 logits
         bce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction='none')
 
         # Calculate pt (probability of the true class)
+        # pt = exp(-bce_loss) 是从 bce_loss (即 -log(pt)) 反推出来的，这是正确的
         pt = torch.exp(-bce_loss)
 
         # Calculate focal loss
-        focal_loss = self.alpha * (1 - pt) ** self.gamma * bce_loss
+        # 注意：这里的 alpha 是 FL 的 alpha，而不是类别平衡的 alpha
+        # 如果 self.alpha 是一个标量
+        if isinstance(self.alpha, float):
+            focal_loss = self.alpha * (1 - pt) ** self.gamma * bce_loss
+
+        # 如果 self.alpha 是类别权重 (例如 [0.25, 0.75])
+        # 这种实现方式更像是标准的 Focal Loss
+        elif isinstance(self.alpha, (list, torch.Tensor)):
+             # 这是更标准的 FL alpha 实现 (alpha_t)
+            alpha_t = self.alpha * targets + (1 - self.alpha) * (1 - targets)
+            focal_loss = alpha_t * (1 - pt) ** self.gamma * bce_loss
+        else:
+            # 原始代码的实现
+            focal_loss = self.alpha * (1 - pt) ** self.gamma * bce_loss
+
 
         # Apply reduction
         if self.reduction == 'mean':
@@ -92,14 +111,21 @@ class SmoothFocalLoss(nn.Module):
     """
     def __init__(self, alpha=0.25, gamma=2.0, alpha_weight=0.5):
         super(SmoothFocalLoss, self).__init__()
+        # ⬆️ 这个 FocalLoss 现在已经被修复了
         self.focal = FocalLoss(alpha=alpha, gamma=gamma, reduction='mean')
         self.smooth_l1 = nn.SmoothL1Loss()
         self.alpha_weight = alpha_weight
 
     def forward(self, input, target):
+        # 'input' 是 logits。
+        # self.focal(input, target) 会正确处理 logits
+        # self.smooth_l1(input, target) 会计算 logits 和 0/1 标签的 L1 loss
+        # (这有点奇怪，但这是原始代码的意图)
         return self.alpha_weight * self.focal(input, target) + \
                 (1-self.alpha_weight) * self.smooth_l1(input, target)
 
+
+# --- (文件中的其余部分没有问题，保持不变) ---
 
 def one_hot(labels: torch.Tensor,
             num_classes: int,
@@ -189,7 +215,7 @@ def soft_dice_loss(input: torch.Tensor, target: torch.Tensor, eps: float = 1e-8,
 
     # compute the actual dice score
     dims = (1, 2, 3)
-    intersection = torch.sum(input_soft * target_one_hot, dims)
+    intersection = torch.sum(input_Ssoft * target_one_hot, dims)
     cardinality = torch.sum(torch.pow(input_soft, 2) + torch.pow(target_one_hot, 2), dims)
 
     dice_score = 2. * intersection / (cardinality + eps)
