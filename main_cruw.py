@@ -17,9 +17,17 @@ def parse_args():
     parser.add_argument('--config', type=str, help='configuration file path')
     parser.add_argument('--test_on_val', action='store_true', help='Eval only on val set (default is test)')
     parser.add_argument('--test_all', action='store_true', help='Eval on val and on test sets')
-    #parser.add_argument('--deterministic', action='store_true', help='Apply deterministic CUDA ops for reproducibility')
+    # parser.add_argument('--deterministic', action='store_true', help='Apply deterministic CUDA ops for reproducibility')
     parser.add_argument('--seed', type=int, help='Seed to use for training the model')
     parser.add_argument('--resume_ckpt', type=str, help='Path to the checkpoint to resume the training')
+
+    # ++++++ 添加 torch.compile 的命令行开关 ++++++
+    parser.add_argument('--use_compile', action='store_true', help='Use torch.compile for optimization')
+    parser.add_argument('--compile_mode', type=str, default='reduce-overhead',
+                        choices=['default', 'reduce-overhead', 'max-autotune'],
+                        help='torch.compile mode')
+    # +++++++++++++++++++++++++++++++++++++++++++++++
+
     parser = parse_configs(parser)
     args = parser.parse_args()
     return args
@@ -27,7 +35,6 @@ def parse_args():
 
 args = parse_args()
 deterministic = False
-
 
 seed = 252 if args.seed is None else args.seed
 
@@ -41,9 +48,28 @@ train_cfg = config_dict['train_cfg']
 test_cfg = config_dict['test_cfg']
 dataset_cfg = config_dict['dataset_cfg']
 
-# Load model
+# 1. 加载原始的 nn.Module 模型实例
 model_instance = get_models(model_cfg)
 model_name = model_cfg['name']
+
+# ============================================================
+# 关键修改：在这里编译 nn.Module 实例
+# ============================================================
+if args.use_compile and hasattr(torch, 'compile'):
+    print(f"Compiling model with torch.compile(mode='{args.compile_mode}')...")
+    try:
+        model_instance = torch.compile(model_instance, mode=args.compile_mode)
+        print("✓ Model compiled successfully")
+    except Exception as e:
+        print(f"⚠️  torch.compile failed: {e}")
+        print("  Continuing with uncompiled model")
+elif args.use_compile:
+    print("⚠️  torch.compile not available (PyTorch < 2.0)")
+    print("  Please upgrade: pip install --upgrade torch")
+else:
+    print("○ torch.compile disabled (use --use_compile to enable)")
+# ============================================================
+
 
 # Init CRUW dataset utils
 dataset = CRUW(data_root=config_dict['dataset_cfg']['base_root'],
@@ -63,7 +89,8 @@ log_dir = train_cfg['ckpt_dir']
 if not os.path.exists(log_dir):
     os.makedirs(log_dir)
 
-logger = TensorBoardLogger(save_dir=train_cfg['ckpt_dir'], version=model_name+'_'+str(seed), name=model_name, default_hp_metric=False)
+logger = TensorBoardLogger(save_dir=train_cfg['ckpt_dir'], version=model_name + '_' + str(seed), name=model_name,
+                           default_hp_metric=False)
 
 # Add some entries to the configuration dict to get back the logs
 run_dir = logger.experiment.log_dir
@@ -83,11 +110,9 @@ if 'RECORD' in model_name:
 model_cfg = config_dict['model_cfg']
 train_cfg = config_dict['train_cfg']
 
+# 2. 将 (可能) 编译好的 model_instance 传递给 LightningModule
 model = Model(model=model_instance, train_dataset=train_dataset, val_dataset=valid_dataset, config_dict=config_dict,
-                 cruw_dataset_obj=dataset, save_dir=logger.log_dir)
-
-print("Compiling model with torch.compile()...")
-model = torch.compile(model)
+              cruw_dataset_obj=dataset, save_dir=logger.log_dir)
 
 if torch.cuda.is_available():
     print('CUDA available, use GPU')
@@ -95,8 +120,13 @@ if torch.cuda.is_available():
 else:
     print('WARNING: CUDA not available, use CPU')
     accelerator = 'cpu'
+
+# 3. precision='16-mixed' 是推荐的用法
+# 4. num_sanity_val_steps=0 仍然推荐，可以避免 DDP 在启动时卡住
 trainer = pl.Trainer(logger=logger, callbacks=callbacks, accelerator=accelerator, strategy='ddp', devices=6,
-                     max_epochs=train_cfg['n_epoch'], deterministic=deterministic, precision=16)
+                     max_epochs=train_cfg['n_epoch'], deterministic=deterministic,
+                     precision='16-mixed',  # 推荐使用 '16-mixed' 而不是 16
+                     num_sanity_val_steps=0)  # 跳过健康检查以避免 DDP 死锁
 
 print('Start training')
 trainer.fit(model, ckpt_path=args.resume_ckpt)
@@ -113,7 +143,7 @@ elif args.test_all:
                 config_dict=config_dict, all_confmaps=True, ckpt_path='best')
     eval_on_test(trainer=trainer, executor=model, dataset=dataset, data_root=config_dict['dataset_cfg']['data_root'],
                  config_dict=config_dict, all_confmaps=True, ckpt_path='best')
-else:    
+else:
     eval_on_test(trainer=trainer, executor=model, dataset=dataset, data_root=config_dict['dataset_cfg']['data_root'],
                  config_dict=config_dict, all_confmaps=True, ckpt_path='best')
 
