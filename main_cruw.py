@@ -6,13 +6,13 @@ import torch
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateMonitor
 from pytorch_lightning.loggers import TensorBoardLogger
-# ⬇️ 关键修改：添加 DDPStrategy 导入
+# ⬇️ 修正：添加 DDPStrategy 导入
 from pytorch_lightning.strategies import DDPStrategy
 from utils import parse_configs, update_config_dict, get_models
 from datasets import ROD2021Dataset
 from evaluation import eval_on_test, eval_on_val
-# ⬇️ 关键修改：从 cruw_trainer 导入 CruwExecutor
-from cruw_trainer import CruwExecutor as Model
+# ⬇️ 修正：保留你原始的导入
+from executors import RECORDExecutor as Model
 
 
 def parse_args():
@@ -23,13 +23,13 @@ def parse_args():
     parser.add_argument('--seed', type=int, help='Seed to use for training the model')
     parser.add_argument('--resume_ckpt', type=str, help='Path to the checkpoint to resume the training')
 
-    # torch.compile 相关参数
+    # ⬇️ 新增：torch.compile 相关参数
     parser.add_argument('--use_compile', action='store_true', help='Use torch.compile for optimization')
     parser.add_argument('--compile_mode', type=str, default='reduce-overhead',
                         choices=['default', 'reduce-overhead', 'max-autotune'],
                         help='torch.compile mode')
 
-    # 性能分析参数
+    # ⬇️ 新增：性能分析参数
     parser.add_argument('--profile', action='store_true', help='Enable profiling')
 
     parser = parse_configs(parser)
@@ -52,20 +52,16 @@ train_cfg = config_dict['train_cfg']
 test_cfg = config_dict['test_cfg']
 dataset_cfg = config_dict['dataset_cfg']
 
-# ============================================================
-# 关键修改：不在这里编译
-# ============================================================
+# Load model
 model_instance = get_models(model_cfg)
 model_name = model_cfg['name']
 
-print(f"Model: {model_name}")
+# ⬇️ 新增：打印 compile 状态
 if args.use_compile:
     print(f"✓ torch.compile enabled (mode: {args.compile_mode})")
-    print("  ⚠️  Model will be compiled after DDP setup")
+    print("  ⚠️  Model will be compiled by LightningModule after DDP setup")
 else:
     print("○ torch.compile disabled")
-# ============================================================
-
 
 # Init CRUW dataset utils
 dataset = CRUW(data_root=config_dict['dataset_cfg']['base_root'],
@@ -106,9 +102,7 @@ if 'RECORD' in model_name:
 model_cfg = config_dict['model_cfg']
 train_cfg = config_dict['train_cfg']
 
-# ============================================================
-# 关键修改：将 compile 参数传递给 LightningModule
-# ============================================================
+# ⬇️ 修正：将 compile 参数传递给 Model (RECORDExecutor)
 model = Model(
     model=model_instance,
     train_dataset=train_dataset,
@@ -116,10 +110,13 @@ model = Model(
     config_dict=config_dict,
     cruw_dataset_obj=dataset,
     save_dir=logger.log_dir,
-    use_compile=args.use_compile,  # 新增
-    compile_mode=args.compile_mode  # 新增
+    use_compile=args.use_compile,  # ⬅️ 新增
+    compile_mode=args.compile_mode  # ⬅️ 新增
 )
-# ============================================================
+
+# ⬇️ 修正：删除这里的 torch.compile(model)
+# print("Compiling model with torch.compile()...")
+# model = torch.compile(model)
 
 if torch.cuda.is_available():
     print('CUDA available, use GPU')
@@ -128,15 +125,13 @@ else:
     print('WARNING: CUDA not available, use CPU')
     accelerator = 'cpu'
 
-# ============================================================
-# 优化 DDP 策略
-# ============================================================
+# ⬇️ 修正：使用 DDPStrategy 并优化参数
 if accelerator == 'gpu':
     strategy = DDPStrategy(
-        find_unused_parameters=False,  # 提升性能
-        gradient_as_bucket_view=True,  # 减少内存拷贝
-        static_graph=True,  # 模型结构固定时使用
-        timeout=1800  # 增加超时时间
+        find_unused_parameters=False,
+        gradient_as_bucket_view=True,
+        static_graph=True,
+        timeout=1800
     )
 else:
     strategy = 'auto'
@@ -145,20 +140,17 @@ trainer = pl.Trainer(
     logger=logger,
     callbacks=callbacks,
     accelerator=accelerator,
-    strategy=strategy,  # 使用优化的策略
+    strategy=strategy,  # ⬅️ 修正
     devices=6,
     max_epochs=train_cfg['n_epoch'],
     deterministic=deterministic,
-    precision='16-mixed',
+    precision='16-mixed',  # ⬅️ 修正：原代码是 16，我保持 '16-mixed'
     num_sanity_val_steps=0
 )
-# ============================================================
 
 print('Start training')
 
-# ============================================================
-# 可选：性能分析
-# ============================================================
+# ⬇️ 新增：可选的性能分析
 if args.profile:
     import time
 
@@ -180,15 +172,12 @@ if args.profile:
     print(f"\n{'=' * 60}")
     print(f"Training time: {elapsed:.2f}s ({elapsed / 60:.2f}min)")
     print(f"{'=' * 60}\n")
-
-    # 打印性能统计
     print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=15))
 else:
     trainer.fit(model, ckpt_path=args.resume_ckpt)
-# ============================================================
 
 print("Start evaluation")
-data_root = config_dict['dataset_cfg']['data_root']
+data_root = config_dict['dataset_cfg']['data_dir']
 
 if args.test_on_val:
     print('Set for evaluation: VALIDATION')

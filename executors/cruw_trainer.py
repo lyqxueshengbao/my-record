@@ -1,195 +1,331 @@
-import argparse
-import yaml
-from cruw import CRUW
 import os
-import torch
+import numpy as np
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping, LearningRateMonitor
-from pytorch_lightning.loggers import TensorBoardLogger
-# ⬇️ 修正：添加 DDPStrategy 导入
-from pytorch_lightning.strategies import DDPStrategy
-from utils import parse_configs, update_config_dict, get_models
-from datasets import ROD2021Dataset
-from evaluation import eval_on_test, eval_on_val
-# ⬇️ 修正：保留你原始的导入
-from executors import RECORDExecutor as Model
+from torch import nn
+import torch
+from torch.utils.data import DataLoader
+from utils.loss import SmoothCELoss, FocalLoss, SmoothFocalLoss
+from datasets.cruw.collate_functions import cr_collate
+from evaluation.postprocess import post_process_single_frame_cruw, write_dets_results_single_frame
+from cruw.eval import evaluate_rodnet_seq
+from cruw.eval.rod.rod_eval_utils import accumulate, summarize
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description='RECORD model')
-    parser.add_argument('--config', type=str, help='configuration file path')
-    parser.add_argument('--test_on_val', action='store_true', help='Eval only on val set (default is test)')
-    parser.add_argument('--test_all', action='store_true', help='Eval on val and on test sets')
-    parser.add_argument('--seed', type=int, help='Seed to use for training the model')
-    parser.add_argument('--resume_ckpt', type=str, help='Path to the checkpoint to resume the training')
+class CruwExecutor(pl.LightningModule):
+    def __init__(self, model, train_dataset, val_dataset, config_dict, cruw_dataset_obj, save_dir, use_compile=False,
+                 compile_mode='reduce-overhead'):
+        """
+        PyTorch lightning base class for training models on CRUW datasets.
+        @param model: instance of the model to train
+        @param train_dataset: training dataset
+        @param val_dataset: validation dataset
+        @param config_dict: dictionary with training configuration (lr, optimizer, path to data etc.)
+        @param cruw_dataset_obj: CRUW dataset object
+        @param save_dir: directory to save data
+        """
+        super(CruwExecutor, self).__init__()
+        # 你的 __init__ 代码已包含 compile 参数，这很好
+        self._raw_model = model
+        self._use_compile = use_compile
+        self._compile_mode = compile_mode
+        self._compiled = False
 
-    # ⬇️ 新增：torch.compile 相关参数
-    parser.add_argument('--use_compile', action='store_true', help='Use torch.compile for optimization')
-    parser.add_argument('--compile_mode', type=str, default='reduce-overhead',
-                        choices=['default', 'reduce-overhead', 'max-autotune'],
-                        help='torch.compile mode')
+        # 暂时不编译，等 configure_model 调用
+        self.model = model
+        self.cruw_dataset_obj = cruw_dataset_obj
+        self.config = config_dict
+        self.train_cfg = config_dict['train_cfg']
+        self.radar_cfg = cruw_dataset_obj.sensor_cfg.radar_cfg
+        self.model_cfg = config_dict['model_cfg']
+        self.n_class = self.cruw_dataset_obj.object_cfg.n_class
+        self.batch_size = self.train_cfg['batch_size']
+        self.learning_rate = self.train_cfg['lr']
+        self.in_channels = self.model_cfg['in_channels']
+        self.win_size = self.train_cfg['win_size']
+        self.model_name = self.model_cfg['name']
 
-    # ⬇️ 新增：性能分析参数
-    parser.add_argument('--profile', action='store_true', help='Enable profiling')
+        # hp_dict = {'model_cfg': config_dict['model_cfg'],
+        #            'train_cfg': config_dict['train_cfg']}
+        # self.save_hyperparameters(hp_dict)
+        # self.save_hyperparameters(ignore=['model', 'train_dataset', 'val_dataset', 'cruw_dataset_obj'])
+        # Model
+        # self.model = model  # 已在顶部设置
+        self.loss_fct = self.get_loss()
 
-    parser = parse_configs(parser)
-    args = parser.parse_args()
-    return args
+        # Dataset
+        self.train_dataset = train_dataset
+        self.val_dataset = val_dataset
 
+        # Test/Val results dirs
+        self.val_res_dir = os.path.join(save_dir, 'val')
+        self.test_res_dir = os.path.join(save_dir, 'test')
+        if not os.path.exists(self.val_res_dir):
+            os.makedirs(self.val_res_dir)
+        if not os.path.exists(self.test_res_dir):
+            os.makedirs(self.test_res_dir)
 
-args = parse_args()
-deterministic = False
+        # For testing on val set
+        self.evalImgs_all = []
+        self.n_frames_all = 0
 
-seed = 252 if args.seed is None else args.seed
+    # ============================================================
+    # ⬇️ 关键修改：添加 configure_model 方法
+    # ============================================================
+    def configure_model(self):
+        """
+        在 DDP 设置完成后编译模型
+        这个方法会在 trainer.fit() 内部、设置好分布式环境后自动调用
+        """
+        if self._use_compile and not self._compiled and hasattr(torch, 'compile'):
+            print(f"\n{'=' * 60}")
+            print(f"Compiling model with torch.compile(mode='{self._compile_mode}')...")
+            print(f"{'=' * 60}\n")
 
-config_dict = yaml.load(open(args.config, 'r'), Loader=yaml.FullLoader)
-config_dict = update_config_dict(config_dict, args)
+            try:
+                # 检查 PyTorch 版本
+                torch_version = torch.__version__.split('+')[0]
+                print(f"PyTorch version: {torch_version}")
 
-pl.seed_everything(seed=seed, workers=True)
+                # 编译模型
+                self.model = torch.compile(
+                    self._raw_model,
+                    mode=self._compile_mode,
+                    fullgraph=False,  # 允许图分割，提高兼容性
+                    dynamic=False  # 静态形状优化
+                )
 
-model_cfg = config_dict['model_cfg']
-train_cfg = config_dict['train_cfg']
-test_cfg = config_dict['test_cfg']
-dataset_cfg = config_dict['dataset_cfg']
+                self._compiled = True
+                print("✓ Model compiled successfully")
+                print(f"  Mode: {self._compile_mode}")
+                print(f"  Fullgraph: False (for compatibility)")
+                print(f"{'=' * 60}\n")
 
-# Load model
-model_instance = get_models(model_cfg)
-model_name = model_cfg['name']
+            except Exception as e:
+                print(f"\n{'=' * 60}")
+                print(f"⚠️  torch.compile failed: {e}")
+                print("  Continuing with uncompiled model")
+                print(f"{'=' * 60}\n")
+                self.model = self._raw_model  # 确保失败时回退
+                self._compiled = False
 
-# ⬇️ 新增：打印 compile 状态
-if args.use_compile:
-    print(f"✓ torch.compile enabled (mode: {args.compile_mode})")
-    print("  ⚠️  Model will be compiled by LightningModule after DDP setup")
-else:
-    print("○ torch.compile disabled")
+        elif self._use_compile and hasattr(torch, 'compile'):
+            print("○ Model already compiled, skipping...")
+        elif self._use_compile:
+            print("⚠️  torch.compile not available (PyTorch < 2.0)")
+            self.model = self._raw_model
 
-# Init CRUW dataset utils
-dataset = CRUW(data_root=config_dict['dataset_cfg']['base_root'],
-               sensor_config_name=config_dict['model_cfg']['sensor_config'])
-radar_configs = dataset.sensor_cfg.radar_cfg
-range_grid = dataset.range_grid
-angle_grid = dataset.angle_grid
-data_dir = config_dict['dataset_cfg']['data_dir']
+    # ============================================================
+    # ⬆️ 关键修改结束
+    # ============================================================
 
-# Load datasets
-train_dataset = ROD2021Dataset(data_dir=data_dir, dataset=dataset, config_dict=config_dict, all_confmaps=False,
-                               split='train')
-valid_dataset = ROD2021Dataset(data_dir=data_dir, dataset=dataset, config_dict=config_dict, all_confmaps=False,
-                               split='valid')
+    def get_loss(self):
+        """
+        Define the loss function to use according to the configuration file
+        @return: loss function object
+        """
+        loss_type = self.train_cfg['loss']
+        if loss_type == 'bce':
+            return nn.BCELoss()
+        elif loss_type == 'focal':
+            # Focal Loss parameters from config or defaults
+            alpha = self.train_cfg.get('focal_alpha', 0.25)
+            gamma = self.train_cfg.get('focal_gamma', 2.0)
+            return FocalLoss(alpha=alpha, gamma=gamma)
+        elif loss_type == 'smooth_focal':
+            # Smooth Focal Loss parameters
+            alpha = self.train_cfg.get('focal_alpha', 0.25)
+            gamma = self.train_cfg.get('focal_gamma', 2.0)
+            alpha_weight = self.train_cfg.get('alpha_loss', 0.5)
+            return SmoothFocalLoss(alpha=alpha, gamma=gamma, alpha_weight=alpha_weight)
+        elif loss_type == 'mse':
+            return nn.SmoothL1Loss()
+        elif loss_type == 'smooth_ce':
+            alpha = self.train_cfg['alpha_loss']
+            return SmoothCELoss(alpha)
+        else:
+            raise ValueError(f"Unknown loss type: {loss_type}")
 
-log_dir = train_cfg['ckpt_dir']
-if not os.path.exists(log_dir):
-    os.makedirs(log_dir)
+    def train_dataloader(self):
+        """
+        Define PyTorch training dataloader
+        @return: train dataloader for ROD2021 dataset
+        """
+        return DataLoader(self.train_dataset, batch_size=self.batch_size, collate_fn=cr_collate,
+                          shuffle=True, num_workers=4, drop_last=True)
 
-logger = TensorBoardLogger(save_dir=train_cfg['ckpt_dir'], version=model_name + '_' + str(seed), name=model_name,
-                           default_hp_metric=False)
+    def val_dataloader(self):
+        """
+        Define PyTorch validation dataloader
+        @return: validation dataloader for ROD2021 dataset
+        """
+        return DataLoader(self.val_dataset, batch_size=self.batch_size, collate_fn=cr_collate,
+                          shuffle=False, num_workers=4, drop_last=True)
 
-# Add some entries to the configuration dict to get back the logs
-run_dir = logger.experiment.log_dir
-config_dict['train_cfg']['run_dir'] = run_dir
+    # Using custom or multiple metrics (default_hp_metric=False)
+    def on_train_start(self):
+        self.logger.log_hyperparams(self.hparams, {"hp/AP": 0, "hp/AR": 0, "hp/val_loss": 0, "hp/train_loss": 0})
 
-checkpoint_callback = ModelCheckpoint(dirpath=None, monitor='val_loss', mode="min", save_last=True, save_top_k=5)
-lr_tracker = LearningRateMonitor()
+    def forward(self, x):
+        """
+        Pytorch Lightning forward pass (inference)
+        @param batch_positions: positional encoding vector (optional - only for UTAE)
+        @param x: input tensor with shape (B, C, T, H, W) where T in the number of timesteps
+        @return: ConfMap prediction
+        """
+        # 这里会调用 self.model，它在 configure_model 之后可能是编译过的
+        confmap_pred = self.model(x)
+        return confmap_pred
 
-early_stop = EarlyStopping(monitor='val_loss', patience=7, mode='min')
-callbacks = [checkpoint_callback, lr_tracker, early_stop]
+    def training_step(self, batch, batch_id):
+        """
+        Perform one training step (forward + backward) on a batch of data.
+        @param batch: data batch from the dataloader
+        @param batch_id: id of the current batch
+        @return: loss value to log
+        """
+        # Get data
+        ra_maps = batch['radar_data']  # N, H, W, C
+        confmap_gts = batch['anno']['confmaps']
+        image_paths = batch['image_paths']
 
-# Update variables with new config dict
-if 'RECORD' in model_name:
-    backbone_cfg = yaml.load(open(model_cfg['backbone_pth']), yaml.FullLoader)
-    config_dict['model_cfg']['layout'] = backbone_cfg
+        confmap_pred = self.model(ra_maps)
 
-model_cfg = config_dict['model_cfg']
-train_cfg = config_dict['train_cfg']
+        loss = self.loss_fct(confmap_pred, confmap_gts)
 
-# ⬇️ 修正：将 compile 参数传递给 Model (RECORDExecutor)
-model = Model(
-    model=model_instance,
-    train_dataset=train_dataset,
-    val_dataset=valid_dataset,
-    config_dict=config_dict,
-    cruw_dataset_obj=dataset,
-    save_dir=logger.log_dir,
-    use_compile=args.use_compile,  # ⬅️ 新增
-    compile_mode=args.compile_mode  # ⬅️ 新增
-)
+        self.log('train_loss', loss, on_step=True, on_epoch=True, logger=True, sync_dist=True,
+                 batch_size=self.batch_size)
+        self.log('hp/train_loss', loss, on_epoch=True, sync_dist=True, batch_size=self.batch_size)
+        return loss
 
-# ⬇️ 修正：删除这里的 torch.compile(model)
-# print("Compiling model with torch.compile()...")
-# model = torch.compile(model)
+    def validation_step(self, batch, batch_id):
+        """
+        Perform a validation step (forward pass) on a batch of data.
+        @param batch: data batch from the dataloader
+        @param batch_id: id of the current batch
+        """
+        # Get data
+        ra_maps = batch['radar_data']  # N, H, W, C
+        confmap_gts = batch['anno']['confmaps']
+        image_paths = batch['image_paths']
+        obj_infos = batch['anno']['obj_infos']
 
-if torch.cuda.is_available():
-    print('CUDA available, use GPU')
-    accelerator = 'gpu'
-else:
-    print('WARNING: CUDA not available, use CPU')
-    accelerator = 'cpu'
+        confmap_pred = self.forward(ra_maps)
 
-# ⬇️ 修正：使用 DDPStrategy 并优化参数
-if accelerator == 'gpu':
-    strategy = DDPStrategy(
-        find_unused_parameters=False,
-        gradient_as_bucket_view=True,
-        static_graph=True,
-        timeout=1800
-    )
-else:
-    strategy = 'auto'
+        loss = self.loss_fct(confmap_pred, confmap_gts)
 
-trainer = pl.Trainer(
-    logger=logger,
-    callbacks=callbacks,
-    accelerator=accelerator,
-    strategy=strategy,  # ⬅️ 修正
-    devices=6,
-    max_epochs=train_cfg['n_epoch'],
-    deterministic=deterministic,
-    precision='16-mixed',  # ⬅️ 修正：原代码是 16，我保持 '16-mixed'
-    num_sanity_val_steps=0
-)
+        self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=False, logger=True, sync_dist=True,
+                 batch_size=self.batch_size)
+        self.log('hp/val_loss', loss, on_epoch=True, sync_dist=True, batch_size=self.batch_size)
 
-print('Start training')
+    def test_step(self, batch, batch_id):
+        """
+        Perform a test step (forward pass + evaluation) on a batch of data.
+        @param batch: data batch from the dataloader
+        @param batch_id: id of the current batch
+        """
+        ra_maps = batch['radar_data']
+        image_paths = batch['image_paths']
+        confmap_gts = batch['anno']
 
-# ⬇️ 新增：可选的性能分析
-if args.profile:
-    import time
+        # Get seq name to write results
+        seq_name = batch['seq_names'][0]
+        if confmap_gts is not None:
+            confmap_gts = batch['anno']['confmaps'].float()
+            save_dir = os.path.join(self.val_res_dir)
+        else:
+            save_dir = os.path.join(self.test_res_dir)
 
-    start_time = time.time()
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+        save_path = os.path.join(save_dir, seq_name.upper() + ".txt")
 
-    with torch.profiler.profile(
-            activities=[
-                torch.profiler.ProfilerActivity.CPU,
-                torch.profiler.ProfilerActivity.CUDA,
-            ],
-            schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=1),
-            on_trace_ready=torch.profiler.tensorboard_trace_handler(run_dir),
-            record_shapes=True,
-            with_stack=True
-    ) as prof:
-        trainer.fit(model, ckpt_path=args.resume_ckpt)
+        if confmap_gts is not None:
+            start_frame_name = image_paths[0][0].split('/')[-1].split('.')[0]
+            frame_name = image_paths[0][-1].split('/')[-1].split('.')[0]
+            frame_id = int(frame_name)
+        else:
+            start_frame_name = image_paths[0][0][0].split('/')[-1].split('.')[0].split('_')[0]
+            frame_name = image_paths[0][-1][0].split('/')[-1].split('.')[0].split('_')[0]
+            frame_id = int(frame_name)
 
-    elapsed = time.time() - start_time
-    print(f"\n{'=' * 60}")
-    print(f"Training time: {elapsed:.2f}s ({elapsed / 60:.2f}min)")
-    print(f"{'=' * 60}\n")
-    print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=15))
-else:
-    trainer.fit(model, ckpt_path=args.resume_ckpt)
+        if frame_id == self.win_size - 1 and self.model_name not in ('RECORDNoLstmMulti', 'RECORDNoLstmSingle'):
+            for tmp_frame_id in range(frame_id):
+                print("Eval frame", tmp_frame_id)
+                tmp_ra_maps = ra_maps[:, :, :tmp_frame_id + 1]
+                confmap_pred = self.forward(tmp_ra_maps)
+                res_final = post_process_single_frame_cruw(confmap_pred[0].cpu(), self.cruw_dataset_obj, self.config)
+                write_dets_results_single_frame(res_final, tmp_frame_id, save_path, self.cruw_dataset_obj)
 
-print("Start evaluation")
-data_root = config_dict['dataset_cfg']['data_dir']
+        confmap_pred = self.forward(ra_maps)
 
-if args.test_on_val:
-    print('Set for evaluation: VALIDATION')
-    eval_on_val(trainer=trainer, executor=model, dataset=dataset, data_root=config_dict['dataset_cfg']['data_root'],
-                config_dict=config_dict, all_confmaps=True)
-elif args.test_all:
-    eval_on_val(trainer=trainer, executor=model, dataset=dataset, data_root=config_dict['dataset_cfg']['data_root'],
-                config_dict=config_dict, all_confmaps=True, ckpt_path='best')
-    eval_on_test(trainer=trainer, executor=model, dataset=dataset, data_root=config_dict['dataset_cfg']['data_root'],
-                 config_dict=config_dict, all_confmaps=True, ckpt_path='best')
-else:
-    eval_on_test(trainer=trainer, executor=model, dataset=dataset, data_root=config_dict['dataset_cfg']['data_root'],
-                 config_dict=config_dict, all_confmaps=True, ckpt_path='best')
+        # Write results
+        res_final = post_process_single_frame_cruw(confmap_pred[0].cpu(), self.cruw_dataset_obj, self.config)
+        write_dets_results_single_frame(res_final, frame_id, save_path, self.cruw_dataset_obj)
 
-print('Training finished.')
+    def evaluate_rodnet_seq_(self, res_path, gt_path, n_frame, subset):
+        ols_thrs = np.around(np.linspace(0.5, 0.9, int(np.round((0.9 - 0.5) / 0.05) + 1), endpoint=True), decimals=2)
+        rec_thrs = np.around(np.linspace(0.0, 1.0, int(np.round((1.0 - 0.0) / 0.01) + 1), endpoint=True), decimals=2)
+        eval_imgs = evaluate_rodnet_seq(res_path, gt_path, n_frame, self.cruw_dataset_obj)
+        out_eval = accumulate(eval_imgs, n_frame, ols_thrs, rec_thrs, self.cruw_dataset_obj, log=False)
+        stats = summarize(out_eval, ols_thrs, rec_thrs, self.cruw_dataset_obj, gl=False)
+
+        self.n_frames_all += n_frame
+        self.evalImgs_all.extend(eval_imgs)
+
+        self.logger.log_metrics({"AP/" + subset.upper(): stats[0] * 100,
+                                 "AR/" + subset.upper(): stats[1] * 100})
+
+    def evaluate_rodnet_(self):
+        ols_thrs = np.around(np.linspace(0.5, 0.9, int(np.round((0.9 - 0.5) / 0.05) + 1), endpoint=True), decimals=2)
+        rec_thrs = np.around(np.linspace(0.0, 1.0, int(np.round((1.0 - 0.0) / 0.01) + 1), endpoint=True), decimals=2)
+        out_eval = accumulate(self.evalImgs_all, self.n_frames_all, ols_thrs, rec_thrs, self.cruw_dataset_obj,
+                              log=False)
+        stats = summarize(out_eval, ols_thrs, rec_thrs, self.cruw_dataset_obj, gl=False)
+        self.logger.log_metrics({"AP/Overall": stats[0] * 100,
+                                 "AR/Overall": stats[1] * 100})
+
+        self.logger.log_metrics({"hp/AP": stats[0] * 100,
+                                 "hp/AR": stats[1] * 100})
+
+    def on_before_batch_transfer(self, batch, dataloader_idx):
+        if self.model_name == 'RECORDNoLstmMulti':
+            b, c, t, h, w = batch['radar_data'].shape
+            batch['radar_data'] = batch['radar_data'].reshape(b, c * t, h, w)
+            return batch
+        elif self.model_name == 'RECORDNoLstmSingle':
+            b, c, t, h, w = batch['radar_data'].shape
+            assert t == 1
+            batch['radar_data'] = batch['radar_data'].reshape(b, c, h, w)
+            return batch
+        else:
+            return batch
+
+    def configure_optimizers(self):
+        opti = self.train_cfg['optimizer']
+        scheduler = self.train_cfg['scheduler']
+        if opti == 'adam':
+            optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
+        elif opti == 'adam_reg':
+            assert self.weight_decay is not None
+            optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate, weight_decay=self.weight_decay)
+        elif opti == 'SGD':
+            optimizer = torch.optim.SGD(self.parameters(), lr=self.learning_rate, momentum=0.9)
+        elif opti == 'adamw':
+            optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate, weight_decay=0.0001)
+        else:
+            raise ValueError
+
+        if scheduler == 'exp':
+            lr_scheduler = {
+                'scheduler': torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9),
+                'interval': 'epoch',
+                'frequency': 10
+            }
+        elif scheduler == 'step':
+            # for DANet
+            lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.1)
+        elif scheduler is None:
+            return optimizer
+        else:
+            raise ValueError
+        return [optimizer], [lr_scheduler]
