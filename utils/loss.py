@@ -59,7 +59,8 @@ class FocalLoss(nn.Module):
         inputs = torch.clamp(inputs, min=1e-7, max=1-1e-7)
 
         # Calculate BCE loss
-        bce_loss = F.binary_cross_entropy(inputs, targets, reduction='none')
+        # bce_loss = F.binary_cross_entropy(inputs, targets, reduction='none')
+        bce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction='none')
 
         # Calculate pt (probability of the true class)
         pt = torch.exp(-bce_loss)
