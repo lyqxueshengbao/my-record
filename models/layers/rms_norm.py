@@ -17,25 +17,13 @@ class RMSNorm2d(nn.Module):
         # 增益参数, 形状 (1, C, 1, 1) 以便广播
         self.weight = nn.Parameter(torch.ones(1, num_channels, 1, 1))
 
-    # ============================================================
-    # ⬇️ 关键修改：替换为更高效的 forward 方法
-    # ============================================================
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x):
         """
         x shape: (B, C, H, W)
         """
-        # 原来的实现:
-        # variance = x.pow(2).mean(dim=(1, 2, 3), keepdim=True)
-        # hidden_states = x * torch.rsqrt(variance + self.eps)
-        # return self.weight * hidden_states
+        # 沿 C, H, W 维度计算 RMS
+        # 这才是 LayerNorm (GroupNorm(1,C)) 的正确行为
+        variance = x.pow(2).mean(dim=(1, 2, 3), keepdim=True)
+        hidden_states = x * torch.rsqrt(variance + self.eps)
 
-        # 更高效的实现 (来自我们的分析):
-        # (B, C, H, W) -> (B, 1, 1, 1)
-        norm = x.norm(2, dim=(1, 2, 3), keepdim=True)
-        # 归一化因子
-        rms = norm * (x.shape[1] * x.shape[2] * x.shape[3]) ** (-0.5)
-        # 归一化
-        return self.weight * x / (rms + self.eps)
-    # ============================================================
-    # ⬆️ 关键修改结束
-    # ============================================================
+        return self.weight * hidden_states

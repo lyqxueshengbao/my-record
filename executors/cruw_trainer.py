@@ -12,8 +12,7 @@ from cruw.eval.rod.rod_eval_utils import accumulate, summarize
 
 
 class CruwExecutor(pl.LightningModule):
-    def __init__(self, model, train_dataset, val_dataset, config_dict, cruw_dataset_obj, save_dir, use_compile=False,
-                 compile_mode='reduce-overhead'):
+    def __init__(self, model, train_dataset, val_dataset, config_dict, cruw_dataset_obj, save_dir):
         """
         PyTorch lightning base class for training models on CRUW datasets.
         @param model: instance of the model to train
@@ -24,14 +23,7 @@ class CruwExecutor(pl.LightningModule):
         @param save_dir: directory to save data
         """
         super(CruwExecutor, self).__init__()
-        # 你的 __init__ 代码已包含 compile 参数，这很好
-        self._raw_model = model
-        self._use_compile = use_compile
-        self._compile_mode = compile_mode
-        self._compiled = False
 
-        # 暂时不编译，等 configure_model 调用
-        self.model = model
         self.cruw_dataset_obj = cruw_dataset_obj
         self.config = config_dict
         self.train_cfg = config_dict['train_cfg']
@@ -49,7 +41,7 @@ class CruwExecutor(pl.LightningModule):
         # self.save_hyperparameters(hp_dict)
         # self.save_hyperparameters(ignore=['model', 'train_dataset', 'val_dataset', 'cruw_dataset_obj'])
         # Model
-        # self.model = model  # 已在顶部设置
+        self.model = model
         self.loss_fct = self.get_loss()
 
         # Dataset
@@ -67,56 +59,6 @@ class CruwExecutor(pl.LightningModule):
         # For testing on val set
         self.evalImgs_all = []
         self.n_frames_all = 0
-
-    # ============================================================
-    # ⬇️ 关键修改：添加 configure_model 方法
-    # ============================================================
-    def configure_model(self):
-        """
-        在 DDP 设置完成后编译模型
-        这个方法会在 trainer.fit() 内部、设置好分布式环境后自动调用
-        """
-        if self._use_compile and not self._compiled and hasattr(torch, 'compile'):
-            print(f"\n{'=' * 60}")
-            print(f"Compiling model with torch.compile(mode='{self._compile_mode}')...")
-            print(f"{'=' * 60}\n")
-
-            try:
-                # 检查 PyTorch 版本
-                torch_version = torch.__version__.split('+')[0]
-                print(f"PyTorch version: {torch_version}")
-
-                # 编译模型
-                self.model = torch.compile(
-                    self._raw_model,
-                    mode=self._compile_mode,
-                    fullgraph=False,  # 允许图分割，提高兼容性
-                    dynamic=False  # 静态形状优化
-                )
-
-                self._compiled = True
-                print("✓ Model compiled successfully")
-                print(f"  Mode: {self._compile_mode}")
-                print(f"  Fullgraph: False (for compatibility)")
-                print(f"{'=' * 60}\n")
-
-            except Exception as e:
-                print(f"\n{'=' * 60}")
-                print(f"⚠️  torch.compile failed: {e}")
-                print("  Continuing with uncompiled model")
-                print(f"{'=' * 60}\n")
-                self.model = self._raw_model  # 确保失败时回退
-                self._compiled = False
-
-        elif self._use_compile and hasattr(torch, 'compile'):
-            print("○ Model already compiled, skipping...")
-        elif self._use_compile:
-            print("⚠️  torch.compile not available (PyTorch < 2.0)")
-            self.model = self._raw_model
-
-    # ============================================================
-    # ⬆️ 关键修改结束
-    # ============================================================
 
     def get_loss(self):
         """
@@ -172,7 +114,6 @@ class CruwExecutor(pl.LightningModule):
         @param x: input tensor with shape (B, C, T, H, W) where T in the number of timesteps
         @return: ConfMap prediction
         """
-        # 这里会调用 self.model，它在 configure_model 之后可能是编译过的
         confmap_pred = self.model(x)
         return confmap_pred
 
@@ -329,3 +270,4 @@ class CruwExecutor(pl.LightningModule):
         else:
             raise ValueError
         return [optimizer], [lr_scheduler]
+
