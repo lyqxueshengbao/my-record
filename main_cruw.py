@@ -96,7 +96,7 @@ else:
     print('WARNING: CUDA not available, use CPU')
     accelerator = 'cpu'
 trainer = pl.Trainer(logger=logger, callbacks=callbacks, accelerator=accelerator, strategy='ddp', devices=6,
-                     max_epochs=train_cfg['n_epoch'], deterministic=deterministic, precision=16)
+                     max_epochs=train_cfg['n_epoch'], num_sanity_val_steps=0, deterministic=deterministic, precision=16)
 
 print('Start training')
 trainer.fit(model, ckpt_path=args.resume_ckpt)
