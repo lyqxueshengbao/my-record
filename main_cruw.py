@@ -79,39 +79,9 @@ def check_norm_layers(model, config_norm_type):
     return norm_layers
 
 
-# 修改后的代码
+# 然后在模型创建后调用
 model_instance = get_models(model_cfg)
-
-# ==================== 添加 torch.compile ====================
-if hasattr(torch, 'compile'):
-    pytorch_version = torch.__version__
-    print("\n" + "=" * 80)
-    print(f"🚀 PyTorch {pytorch_version} 支持 torch.compile")
-    print("=" * 80)
-    print("📦 正在编译模型以优化性能...")
-
-    try:
-        model_instance = torch.compile(
-            model_instance,
-            mode='max-autotune',  # 最大优化
-            fullgraph=False,  # 允许图断开
-            dynamic=False,  # 静态形状（更快）
-        )
-        print("✅ 模型编译成功！")
-        print("⏳ 注意：首次前向传播会触发实际编译（10-60秒）")
-        print("   后续迭代将显著加速")
-    except Exception as e:
-        print(f"⚠️  编译失败，将使用未编译版本: {e}")
-
-    print("=" * 80 + "\n")
-else:
-    print("\n" + "=" * 80)
-    print(f"⚠️  PyTorch {torch.__version__} 不支持 torch.compile")
-    print("   建议升级到 PyTorch 2.0+：pip install torch>=2.0.0")
-    print("=" * 80 + "\n")
-# ==================== torch.compile 结束 ====================
-
-check_norm_layers(model_instance, model_cfg.get('norm', 'rms'))
+check_norm_layers(model_instance, model_cfg.get('norm', 'rms'))  # ← 调用检查函数
 
 model_name = model_cfg['name']
 

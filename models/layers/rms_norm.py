@@ -3,25 +3,39 @@
 import torch
 import torch.nn as nn
 
+# 安装 Apex
+# pip install apex  # 或从源码安装
+
+from apex.normalization import FusedRMSNorm
+
 
 class RMSNorm2d(nn.Module):
     """
-    RMSNorm for (B, C, H, W) tensors
-    Compatible with torch.compile
+    使用 Apex 融合内核的高效 RMSNorm
     """
 
     def __init__(self, num_channels, eps=1e-6):
         super(RMSNorm2d, self).__init__()
-        self.eps = eps
         self.num_channels = num_channels
-        self.weight = nn.Parameter(torch.ones(num_channels))
+        # Apex 的 FusedRMSNorm 需要 1D 输入
+        self.norm = FusedRMSNorm(num_channels, eps=eps)
 
     def forward(self, x):
-        """x shape: (B, C, H, W)"""
-        # 在 (B, H, W) 维度计算 RMS，每个通道独立
-        variance = x.pow(2).mean(dim=(0, 2, 3), keepdim=True)
-        x = x * torch.rsqrt(variance + self.eps)
-        return x * self.weight.view(1, -1, 1, 1)
+        """
+        x shape: (B, C, H, W)
+        """
+        B, C, H, W = x.shape
 
-    def extra_repr(self):
-        return f'{self.num_channels}, eps={self.eps}'
+        # 重塑为 (B*H*W, C) 进行归一化
+        x_reshaped = x.permute(0, 2, 3, 1).contiguous()  # (B, H, W, C)
+        x_reshaped = x_reshaped.view(-1, C)  # (B*H*W, C)
+
+        # 使用融合 RMSNorm
+        x_norm = self.norm(x_reshaped)  # (B*H*W, C)
+
+        # 重塑回 (B, C, H, W)
+        x_norm = x_norm.view(B, H, W, C)
+        x_norm = x_norm.permute(0, 3, 1, 2).contiguous()  # (B, C, H, W)
+
+        return x_norm
+
