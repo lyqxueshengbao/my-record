@@ -73,7 +73,7 @@ model_cfg:
   in_channels: 8
   n_chirps: 4
   nb_classes: 3
-  norm: rms
+  norm: layer
   max_dets: 20
   peak_thres: 0.3
   ols_thres: 0.3
