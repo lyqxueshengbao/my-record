@@ -252,7 +252,7 @@ class ECALayer(nn.Module):
         y = self.sigmoid(y)
 
         # (b, c, h, w) * (b, c, 1, 1) -> (b, c, h, w)
-        return x * y.expand_as(x)
+        return x + (x * y.expand_as(x)) * 0.5
 
 
 # ^^^^^^^^^^^^^^ 新增 ECALayer ^^^^^^^^^^^^^^
