@@ -73,7 +73,7 @@ model_cfg:
   in_channels: 8
   n_chirps: 4
   nb_classes: 3
-  norm: layer
+  norm: rms
   max_dets: 20
   peak_thres: 0.3
   ols_thres: 0.3
@@ -97,7 +97,7 @@ confmap_cfg:
     cyclist: 2
     car: 3
 train_cfg:
-  ckpt_dir: logs/rod2021_focaloss+rmsnorm
+  ckpt_dir: logs/rod2021_focaloss+rmsnorm_norm:rms
   n_epoch: 100
   batch_size: 10
   accumulate_grad: 1
