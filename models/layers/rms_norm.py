@@ -18,12 +18,12 @@ class RMSNorm2d(nn.Module):
         self.weight = nn.Parameter(torch.ones(1, num_channels, 1, 1))
 
     def forward(self, x):
-        """x shape: (B, C, H, W)"""
-        # 原来的代码（显存占用高）：
-        # variance = x.pow(2).mean(dim=(1, 2, 3), keepdim=True)
-        # hidden_states = x * torch.rsqrt(variance + self.eps)
-        # return self.weight * hidden_states
+        """
+        x shape: (B, C, H, W)
+        """
+        # 沿 C, H, W 维度计算 RMS
+        # 这才是 LayerNorm (GroupNorm(1,C)) 的正确行为
+        variance = x.pow(2).mean(dim=(1, 2, 3), keepdim=True)
+        hidden_states = x * torch.rsqrt(variance + self.eps)
 
-        # 优化后（显存占用低）：
-        variance = (x * x).mean(dim=(1, 2, 3), keepdim=True)
-        return x * torch.rsqrt(variance + self.eps) * self.weight
+        return self.weight * hidden_states

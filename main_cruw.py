@@ -42,47 +42,7 @@ test_cfg = config_dict['test_cfg']
 dataset_cfg = config_dict['dataset_cfg']
 
 # Load model
-# main_cruw.py (在 parse_args 函数之前)
-
-def check_norm_layers(model, config_norm_type):
-    """检查模型中所有归一化层的类型"""
-    print("\n" + "=" * 80)
-    print(f"配置文件中 norm 类型: {config_norm_type}")
-    print("=" * 80)
-
-    norm_layers = []
-    for name, module in model.named_modules():
-        module_type = type(module).__name__
-        # 检查是否是归一化层
-        if any(x in module_type for x in ['Norm', 'norm']):
-            norm_layers.append((name, module_type))
-
-    if norm_layers:
-        print(f"\n找到 {len(norm_layers)} 个归一化层:")
-        for name, module_type in norm_layers:
-            print(f"  ✓ {name:50s} -> {module_type}")
-    else:
-        print("  ⚠️  未找到归一化层!")
-
-    # 验证是否符合预期
-    expected_type = "GroupNorm" if config_norm_type == "layer" else "RMSNorm2d"
-    mismatched = [name for name, mtype in norm_layers if expected_type not in mtype]
-
-    if mismatched:
-        print(f"\n  ⚠️  警告: 以下层类型不匹配预期 ({expected_type}):")
-        for name in mismatched:
-            print(f"    - {name}")
-    else:
-        print(f"\n  ✅ 所有归一化层类型正确 ({expected_type})")
-
-    print("=" * 80 + "\n")
-    return norm_layers
-
-
-# 然后在模型创建后调用
 model_instance = get_models(model_cfg)
-check_norm_layers(model_instance, model_cfg.get('norm', 'rms'))  # ← 调用检查函数
-
 model_name = model_cfg['name']
 
 # Init CRUW dataset utils
