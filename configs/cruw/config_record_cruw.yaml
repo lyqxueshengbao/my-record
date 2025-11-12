@@ -99,8 +99,8 @@ confmap_cfg:
 train_cfg:
   ckpt_dir: logs/rod2021_focaloss+rmsnorm_norm:rms
   n_epoch: 100
-  batch_size: 10
-  accumulate_grad: 1
+  batch_size: 5
+  accumulate_grad: 2
   lr: 0.00375
   optimizer: adam
   scheduler: exp
