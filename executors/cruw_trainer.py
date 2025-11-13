@@ -3,6 +3,7 @@ import numpy as np
 import pytorch_lightning as pl
 from torch import nn
 import torch
+import torch.nn.functional as F  # <-- 导入
 from torch.utils.data import DataLoader
 from utils.loss import SmoothCELoss, FocalLoss, SmoothFocalLoss
 from datasets.cruw.collate_functions import cr_collate
@@ -35,6 +36,9 @@ class CruwExecutor(pl.LightningModule):
         self.in_channels = self.model_cfg['in_channels']
         self.win_size = self.train_cfg['win_size']
         self.model_name = self.model_cfg['name']
+
+        # <-- 新增：读取 lambda_temp，如果未定义则默认为 0.0
+        self.lambda_temp = self.train_cfg.get('lambda_temp', 0.0)
 
         # hp_dict = {'model_cfg': config_dict['model_cfg'],
         #            'train_cfg': config_dict['train_cfg']}
@@ -114,6 +118,8 @@ class CruwExecutor(pl.LightningModule):
         @param x: input tensor with shape (B, C, T, H, W) where T in the number of timesteps
         @return: ConfMap prediction
         """
+        # 在 forward (推理) 模式下，模型应处于 eval() 状态，
+        # 此时 `record.py` 的 forward 只会返回 confmap_pred
         confmap_pred = self.model(x)
         return confmap_pred
 
@@ -125,18 +131,62 @@ class CruwExecutor(pl.LightningModule):
         @return: loss value to log
         """
         # Get data
-        ra_maps = batch['radar_data']  # N, H, W, C
-        confmap_gts = batch['anno']['confmaps']
+        ra_maps = batch['radar_data']  # (B, C, T, H, W)
+        confmap_gts = batch['anno']['confmaps']  # (B, n_class, H, W)
         image_paths = batch['image_paths']
 
-        confmap_pred = self.model(ra_maps)
+        # --- 修改开始 ---
 
-        loss = self.loss_fct(confmap_pred, confmap_gts)
+        # Get model output
+        # In training mode, model returns (confmap_pred, (features_lstm1, features_lstm2))
+        model_output = self.model(ra_maps)
 
-        self.log('train_loss', loss, on_step=True, on_epoch=True, logger=True, sync_dist=True,
+        confmap_pred = None
+        feature_sequence_tuple = None
+
+        # Unpack output
+        if self.model.training and isinstance(model_output, tuple):
+            confmap_pred, feature_sequence_tuple = model_output
+        else:
+            # Fallback if model is not in training mode for some reason
+            confmap_pred = model_output
+
+        # 1. Calculate detection loss (e.g., Focal Loss)
+        det_loss = self.loss_fct(confmap_pred, confmap_gts)
+
+        # 2. Calculate temporal consistency loss
+        total_loss = det_loss
+        l_temp = torch.tensor(0.0, device=det_loss.device)  # 初始化为 0
+
+        if self.model.training and feature_sequence_tuple is not None and self.lambda_temp > 0:
+            # 使用 features_lstm2_tensor (B, T, C, H, W)
+            features_seq = feature_sequence_tuple[1]
+
+            # We need at least 2 frames to compare
+            if features_seq.shape[1] > 1:
+                features_t = features_seq[:, 1:, ...]  # (B, T-1, C, H, W)
+                features_t_minus_1 = features_seq[:, :-1, ...]  # (B, T-1, C, H, W)
+
+                # Calculate cosine similarity loss, compare along the channel dimension (dim=2)
+                cos_sim = F.cosine_similarity(features_t, features_t_minus_1, dim=2)  # Output shape (B, T-1, H, W)
+                l_temp = 1.0 - cos_sim.mean()  # Mean over all dimensions
+
+                # 3. Combine losses
+                total_loss = det_loss + self.lambda_temp * l_temp
+
+                self.log('train/temp_loss', l_temp.item(), on_step=True, on_epoch=True, logger=True, sync_dist=True,
+                         batch_size=self.batch_size)
+
+        # Log losses
+        self.log('train/det_loss', det_loss.item(), on_step=True, on_epoch=True, logger=True, sync_dist=True,
                  batch_size=self.batch_size)
-        self.log('hp/train_loss', loss, on_epoch=True, sync_dist=True, batch_size=self.batch_size)
-        return loss
+        self.log('train_loss', total_loss, on_step=True, on_epoch=True, logger=True, sync_dist=True,
+                 batch_size=self.batch_size)
+        self.log('hp/train_loss', total_loss, on_epoch=True, sync_dist=True, batch_size=self.batch_size)
+
+        # --- 修改结束 ---
+
+        return total_loss
 
     def validation_step(self, batch, batch_id):
         """
@@ -150,6 +200,7 @@ class CruwExecutor(pl.LightningModule):
         image_paths = batch['image_paths']
         obj_infos = batch['anno']['obj_infos']
 
+        # self.model.training is False here, so forward() will return only confmap_pred
         confmap_pred = self.forward(ra_maps)
 
         loss = self.loss_fct(confmap_pred, confmap_gts)
@@ -197,6 +248,7 @@ class CruwExecutor(pl.LightningModule):
                 res_final = post_process_single_frame_cruw(confmap_pred[0].cpu(), self.cruw_dataset_obj, self.config)
                 write_dets_results_single_frame(res_final, tmp_frame_id, save_path, self.cruw_dataset_obj)
 
+        # self.model.training is False here, so forward() will return only confmap_pred
         confmap_pred = self.forward(ra_maps)
 
         # Write results
@@ -270,4 +322,3 @@ class CruwExecutor(pl.LightningModule):
         else:
             raise ValueError
         return [optimizer], [lr_scheduler]
-

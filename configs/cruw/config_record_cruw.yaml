@@ -97,7 +97,7 @@ confmap_cfg:
     cyclist: 2
     car: 3
 train_cfg:
-  ckpt_dir: logs/rod2021_focaloss_learn0.00375_new
+  ckpt_dir: logs/rod2021_focaloss+temporal_consistency_loss
   n_epoch: 100
   batch_size: 10
   accumulate_grad: 1
@@ -111,6 +111,10 @@ train_cfg:
   focal_gamma: 2.0   # 聚焦参数，降低易分类样本的权重 (default: 2.0)
   # 如果使用 smooth_focal 或 smooth_ce，alpha_loss 控制两种损失的混合比例
   alpha_loss: 0.5
+
+  # --- 新增：时序一致性损失权重 ---
+  lambda_temp: 0.1   # 0.0 表示禁用。推荐从 0.1, 0.5, 1.0 开始尝试
+
   win_size: 12
   train_step: 1
   train_stride: 4

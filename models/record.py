@@ -6,6 +6,7 @@ from .layers.inverted_residual import Conv3x3ReLUNorm, InvertedResidual
 from .layers.bottleneck_lstm import BottleneckLSTM
 from utils.models_utils import _make_divisible
 
+
 def build_model(model_config, alpha=1.0, norm_type='layer'):
     layers = []
     for layer_name in model_config:
@@ -15,12 +16,12 @@ def build_model(model_config, alpha=1.0, norm_type='layer'):
         # If addition (for skip connections), then evaluate expression
         if isinstance(in_channels, str):
             in_channels = eval(in_channels)
-        in_channels = _make_divisible(in_channels*alpha, 8.0)
+        in_channels = _make_divisible(in_channels * alpha, 8.0)
         out_channels = layer['out_channels']
         # If addition (for skip connection), then evaluate expression
         if isinstance(out_channels, str):
             out_channels = eval(out_channels)
-        out_channels = _make_divisible(out_channels*alpha, 8.0)
+        out_channels = _make_divisible(out_channels * alpha, 8.0)
         stride = layer['stride']
         if layer['use_norm']:
             norm = norm_type
@@ -37,11 +38,13 @@ def build_model(model_config, alpha=1.0, norm_type='layer'):
         elif layer_type == 'inverted_residual':
             expansion_factor = layer['expansion_factor']
             num_block = layer['num_block']
-            layers.append(InvertedResidual(in_channels=in_channels, out_channels=out_channels, expansion_factor=expansion_factor,
-                                           stride=stride, norm=norm))
+            layers.append(
+                InvertedResidual(in_channels=in_channels, out_channels=out_channels, expansion_factor=expansion_factor,
+                                 stride=stride, norm=norm))
             for i in range(1, num_block):
-                layers.append(InvertedResidual(in_channels=out_channels, out_channels=out_channels, expansion_factor=expansion_factor,
-                                           stride=stride, norm=norm))
+                layers.append(InvertedResidual(in_channels=out_channels, out_channels=out_channels,
+                                               expansion_factor=expansion_factor,
+                                               stride=stride, norm=norm))
         elif layer_type == 'bottleneck_lstm':
             num_block = layer['num_block']
             layers.append(BottleneckLSTM(input_channels=in_channels, hidden_channels=out_channels, norm=norm))
@@ -51,8 +54,9 @@ def build_model(model_config, alpha=1.0, norm_type='layer'):
             kernel_size = layer['kernel_size']
             padding = layer['padding']
             output_padding = layer['output_padding']
-            layers.append(nn.ConvTranspose2d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size,
-                                             padding=padding, output_padding=output_padding, stride=stride))
+            layers.append(
+                nn.ConvTranspose2d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size,
+                                   padding=padding, output_padding=output_padding, stride=stride))
 
     return layers
 
@@ -77,18 +81,51 @@ class Record(nn.Module):
         """
         Forward pass RECORD model
         @param x: input tensor with shape (B, C, T, H, W) where T is the number of timesteps
-        @return: ConfMap prediction of the last time step with shape (B, n_classes, H, W)
+        @return:
+            - In training: (confmap_pred, (features_lstm1_seq, features_lstm2_seq))
+               - confmap_pred: (B, n_classes, H, W) - Prediction for the last time step
+               - features_lstm1_seq: (B, T, C1, H1, W1) - Feature sequence from first LSTM
+               - features_lstm2_seq: (B, T, C2, H2, W2) - Feature sequence from second LSTM
+            - In eval: confmap_pred (B, n_classes, H, W)
         """
         time_steps = x.shape[2]
         assert len(x.shape) == 5
+
+        # Lists to store features from each time step
+        features_lstm1_seq = []
+        features_lstm2_seq = []
+
+        # Initialize features for the decoder (will be overwritten by last time step)
+        features_backbone = None
+        features_lstm1 = None
+        features_lstm2 = None
+
         for t in range(time_steps):
             if t == 0:
                 # Init hidden states if first time step of sliding window
                 self.encoder.__init_hidden__()
-            st_features_lstm1, st_features_lstm2, st_features_backbone = self.encoder(x[:, :, t])
 
-        confmap_pred = self.decoder(st_features_lstm1, st_features_lstm2, st_features_backbone)
-        return self.sigmoid(confmap_pred)
+            # Encoder returns: st_features_backbone, st_features_lstm2, st_features_lstm1
+            features_backbone, features_lstm2, features_lstm1 = self.encoder(x[:, :, t])
+
+            # Store features for temporal loss
+            if self.training:
+                features_lstm1_seq.append(features_lstm1)
+                features_lstm2_seq.append(features_lstm2)
+
+        # Decoder uses features from the *last* time step
+        confmap_pred = self.decoder(features_backbone, features_lstm2, features_lstm1)
+
+        if self.training:
+            # Stack features along the time dimension (dim=1)
+            # Resulting shape: (B, T, C, H, W)
+            features_lstm1_tensor = torch.stack(features_lstm1_seq, dim=1)
+            features_lstm2_tensor = torch.stack(features_lstm2_seq, dim=1)
+
+            return self.sigmoid(confmap_pred), (features_lstm1_tensor, features_lstm2_tensor)
+        else:
+            # In validation or test mode, return only the prediction
+            return self.sigmoid(confmap_pred)
 
 
 class RecordEncoder(nn.Module):
@@ -116,14 +153,16 @@ class RecordEncoder(nn.Module):
                                              out_channels=config['ir_block1']['out_channels'],
                                              num_block=config['ir_block1']['num_block'],
                                              expansion_factor=config['ir_block1']['expansion_factor'],
-                                             stride=config['ir_block1']['stride'], use_norm=config['ir_block1']['use_norm'])
+                                             stride=config['ir_block1']['stride'],
+                                             use_norm=config['ir_block1']['use_norm'])
 
         # IR block 2 (extracts spatial features and decrease spatial dimension by a factor of 2)
         self.ir_block2 = self._make_ir_block(in_channels=config['ir_block2']['in_channels'],
                                              out_channels=config['ir_block2']['out_channels'],
                                              num_block=config['ir_block2']['num_block'],
                                              expansion_factor=config['ir_block2']['expansion_factor'],
-                                             stride=config['ir_block2']['stride'], use_norm=config['ir_block2']['use_norm'])
+                                             stride=config['ir_block2']['stride'],
+                                             use_norm=config['ir_block2']['use_norm'])
 
         # Bottleneck LSTM 1 (extract spatial and temporal features)
         lstm_norm = None if not config['bottleneck_lstm1']['use_norm'] else self.norm
@@ -136,7 +175,8 @@ class RecordEncoder(nn.Module):
                                              out_channels=config['ir_block3']['out_channels'],
                                              num_block=config['ir_block3']['num_block'],
                                              expansion_factor=config['ir_block3']['expansion_factor'],
-                                             stride=config['ir_block3']['stride'], use_norm=config['ir_block3']['use_norm'])
+                                             stride=config['ir_block3']['stride'],
+                                             use_norm=config['ir_block3']['use_norm'])
 
         # Bottleneck LSTM 2 (extract spatial and temporal features)
         lstm_norm = None if not config['bottleneck_lstm2']['use_norm'] else self.norm
@@ -149,13 +189,14 @@ class RecordEncoder(nn.Module):
                                              out_channels=config['ir_block4']['out_channels'],
                                              num_block=config['ir_block4']['num_block'],
                                              expansion_factor=config['ir_block4']['expansion_factor'],
-                                             stride=config['ir_block4']['stride'], use_norm=config['ir_block4']['use_norm'])
-
+                                             stride=config['ir_block4']['stride'],
+                                             use_norm=config['ir_block4']['use_norm'])
 
     def forward(self, x):
         """
         @param x: input tensor for timestep t with shape (B, C, H, W)
         @return: list of features maps and hidden states (spatio-temporal features)
+                 Returns: (st_features_backbone, st_features_lstm2, st_features_lstm1)
         """
         # Extracts spatial information
         x = self.in_conv(x)
@@ -192,7 +233,7 @@ class RecordEncoder(nn.Module):
                                    expansion_factor=expansion_factor, norm=norm)]
         for i in range(1, num_block):
             layers.append(InvertedResidual(in_channels=out_channels, out_channels=out_channels, stride=1,
-                                           expansion_factor=expansion_factor,  norm=norm))
+                                           expansion_factor=expansion_factor, norm=norm))
         return nn.Sequential(*layers)
 
     def __init_hidden__(self):
@@ -266,8 +307,8 @@ class RecordDecoder(nn.Module):
 
         conv_norm = None if not config['conv_head1']['use_norm'] else norm_decoder
         self.conv_head1 = Conv3x3ReLUNorm(in_channels=config['conv_head1']['in_channels'],
-                            out_channels=config['conv_head1']['out_channels'],
-                            stride=config['conv_head1']['stride'], norm=conv_norm)
+                                          out_channels=config['conv_head1']['out_channels'],
+                                          stride=config['conv_head1']['stride'], norm=conv_norm)
         self.conv_head2 = nn.Conv2d(in_channels=config['conv_head2']['in_channels'],
                                     out_channels=config['conv_head2']['out_channels'],
                                     kernel_size=config['conv_head2']['kernel_size'],
@@ -295,4 +336,3 @@ class RecordDecoder(nn.Module):
         x = self.conv_head1(x)
         x = self.conv_head2(x)
         return x
-
