@@ -3,7 +3,7 @@ from .record import RecordDecoder
 from .layers.inverted_residual import Conv3x3ReLUNorm, InvertedResidual
 
 class RecordEncoderNoLstm(nn.Module):
-    def __init__(self, in_channels, config, norm='layer'):
+    def __init__(self, in_channels, config, norm='batch'):
         """
         RECurrent Online object detectOR (RECORD) features extractor.
         @param in_channels: number of input channels (default: 8)

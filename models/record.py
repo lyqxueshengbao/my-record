@@ -6,7 +6,7 @@ from .layers.inverted_residual import Conv3x3ReLUNorm, InvertedResidual
 from .layers.bottleneck_lstm import BottleneckLSTM
 from utils.models_utils import _make_divisible
 
-def build_model(model_config, alpha=1.0, norm_type='layer'):
+def build_model(model_config, alpha=1.0, norm_type='batch'):
     layers = []
     for layer_name in model_config:
         layer = model_config[layer_name]

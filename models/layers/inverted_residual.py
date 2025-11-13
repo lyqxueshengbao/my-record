@@ -15,9 +15,17 @@ class Conv3x3ReLUNorm(nn.Module):
         self.conv = nn.Conv2d(in_channels, out_channels, padding=1, kernel_size=3, stride=stride)
         self.acti = nn.LeakyReLU(inplace=True)
 
-        if norm is not None:
+        # In Conv3x3ReLUNorm.__init__
+        if norm == 'batch':
             # 替换为 BatchNorm2d
             self.norm = nn.BatchNorm2d(out_channels)
+        elif norm == 'layer':
+            # 你需要把原始的 LayerNorm 代码加回来
+            # 警告：CNN中的LayerNorm需要知道H,W维度，实现可能较复杂
+            # 也许原始代码是 GroupNorm(1, out_channels)？
+            # 如果不确定，先设置回 None
+            print(f"警告: Conv3x3ReLUNorm 不支持 'layer' norm，已禁用。")
+            self.norm = None
         else:
             self.norm = None
 

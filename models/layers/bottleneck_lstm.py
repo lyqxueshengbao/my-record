@@ -32,12 +32,32 @@ class BottleneckLSTMCell(nn.Module):
         self.relu = nn.LeakyReLU()
         self.sigmoid = nn.Sigmoid()
 
-        if norm is not None:
+        # In BottleneckLSTMCell.__init__
+        if norm == 'batch':
             # 替换为 BatchNorm2d
             self.norm_wbi = nn.BatchNorm2d(self.hidden_channels)
             self.norm_wbf = nn.BatchNorm2d(self.hidden_channels)
             self.norm_wbc = nn.BatchNorm2d(self.hidden_channels)
             self.norm_wbo = nn.BatchNorm2d(self.hidden_channels)
+        elif norm == 'layer':
+            #
+            # 在这里加回原始的 LayerNorm 实现
+            #
+            # 示例 (我不确定原始代码是怎么写的，但它可能长这样):
+            # 警告: LayerNorm在RNN中通常作用于 (B, C, H, W) 的 (C, H, W)
+            # 这需要知道 H 和 W，很可能是在 forward 中动态获取
+            # 或者，更常见的是，它使用 GroupNorm 来模拟
+            # self.norm_wbi = nn.GroupNorm(1, self.hidden_channels)
+            # self.norm_wbf = nn.GroupNorm(1, self.hidden_channels)
+            # self.norm_wbc = nn.GroupNorm(1, self.hidden_channels)
+            # self.norm_wbo = nn.GroupNorm(1, self.hidden_channels)
+            #
+            # 如果你没有原始代码，并且不确定如何实现，
+            # 最好是报错来提醒你自己：
+            raise ValueError(f"BottleneckLSTMCell 不支持 'layer' norm，但配置要求使用它。")
+        else:
+            # norm is None or unrecognised
+            pass
 
         self._initialize_weights()
 
