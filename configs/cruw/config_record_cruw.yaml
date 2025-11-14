@@ -97,7 +97,7 @@ confmap_cfg:
     cyclist: 2
     car: 3
 train_cfg:
-  ckpt_dir: logs/rod2021_focaloss+mixednorm+eca+mixup_bce
+  ckpt_dir: logs/rod2021_focaloss+mixednorm+eca+cutmix
   n_epoch: 100
   batch_size: 10
   accumulate_grad: 1
@@ -105,7 +105,7 @@ train_cfg:
   optimizer: adam
   scheduler: exp
   # 损失函数选择: 'bce', 'focal', 'smooth_focal', 'mse', 'smooth_ce'
-  loss: bce  # 改为使用 Focal Loss
+  loss: focal  # 改为使用 Focal Loss
   # Focal Loss 参数
   focal_alpha: 0.25  # 平衡正负样本权重 (default: 0.25)
   focal_gamma: 2.0   # 聚焦参数，降低易分类样本的权重 (default: 2.0)
@@ -119,6 +119,11 @@ train_cfg:
   train_log_step: 1000
   val_log_step: 100
   test_log_step: 200
+# 2. 启用了新的 CutMix (我们的新代码会读取这些)
+  use_cutmix: true
+  cutmix_alpha: 1.0  # (CutMix 的 Alpha 值, 1.0 是常用默认值)
+  cutmix_prob: 0.5   # (执行 CutMix 的概率)
+  # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   aug:
     mirror: 0.5
     reverse: 0.5

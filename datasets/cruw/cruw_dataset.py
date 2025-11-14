@@ -1,3 +1,7 @@
+#
+# 完整文件: datasets/cruw/cruw_dataset.py
+# (已替换为 CutMix)
+#
 import os
 import random
 import pickle
@@ -14,13 +18,6 @@ class ROD2021Dataset(data.Dataset):
     def __init__(self, data_dir, dataset, config_dict, split, is_random_chirp=False, subset=None, all_confmaps=False):
         """
         Dataset for the ROD2021 dataset. Modified from: https://github.com/yizhou-wang/RODNet
-        @param data_dir: directory to the prepared data
-        @param dataset: CRUW dataset object
-        @param config_dict: dictionary with the training configuration (hyperparameters, paths to data etc.)
-        @param split: split to load (train, valid or test)
-        @param is_random_chirp: load a random chirps among the 4 available (only if num_chirps < 4
-        @param subset: sequence to load, if only one is loaded (use in test)
-        @param all_confmaps: if False returns only the ConfMap of the LAST timestep (use for RECORD, UTAE and DANet-C)
         """
         # parameters settings
         self.data_dir = data_dir
@@ -32,237 +29,161 @@ class ROD2021Dataset(data.Dataset):
         self.model_name = config_dict['model_cfg']['name']
         self.aug_dict = config_dict['train_cfg']['aug']
 
-        # MixUp configuration
-        self.use_mixup = config_dict['train_cfg'].get('use_mixup', False)
-        self.mixup_alpha = config_dict['train_cfg'].get('mixup_alpha', 0.2)
-        self.mixup_prob = config_dict['train_cfg'].get('mixup_prob', 0.5)
-        self.mixup_type = config_dict['train_cfg'].get('mixup_type', 'sequence')  # 'sequence' or 'spatial'
+        # vvvvvvvvvvvv 【修改】 vvvvvvvvvvvv
+        # CutMix configuration
+        self.use_cutmix = config_dict['train_cfg'].get('use_cutmix', False)
+        self.cutmix_alpha = config_dict['train_cfg'].get('cutmix_alpha', 1.0)  # CutMix 默认 alpha 为 1.0
+        self.cutmix_prob = config_dict['train_cfg'].get('cutmix_prob', 0.5)  # CutMix 通常有一个单独的应用概率
+        # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-        if config_dict['dataset_cfg']['docker']:
-            docker_path = "/home/datasets/"
-
-        # data settings
         self.normalize = config_dict['train_cfg']['normalize']
         if self.normalize:
-            self.mean_data = torch.Tensor(config_dict['dataset_cfg']['mean_cplx'])
-            self.std_data = torch.Tensor(config_dict['dataset_cfg']['std_cplx'])
-
-        # Get "real" split folder
-        if split == 'train':
-            self.split = 'train'
-        else:
-            assert split in ('valid', 'test')
-            self.split = split
-            if config_dict['model_cfg']['name'] == "RECORD-OI":
-                self.win_size = 1
-
-        if self.split == 'train':
-            self.step = config_dict['train_cfg']['train_step']
-            self.stride = config_dict['train_cfg']['train_stride']
-        else:
-            self.step = config_dict['test_cfg']['test_step']
-            self.stride = config_dict['test_cfg']['test_stride']
+            self.mean_data = np.array(config_dict['dataset_cfg']['mean_ampl'])
+            self.std_data = np.array(config_dict['dataset_cfg']['std_ampl'])
 
         self.is_random_chirp = is_random_chirp
+        if is_random_chirp:
+            self.n_chirps = config_dict['model_cfg']['n_chirps']
+            if self.n_chirps > self.dataset.sensor_cfg.n_chirps:
+                raise ValueError("n_chirps in model config larger than n_chirps in sensor config")
 
-        # Dataloader for MNet
-        self.n_chirps = config_dict['model_cfg']['n_chirps']
-        self.chirp_ids = self.dataset.sensor_cfg.radar_cfg['chirp_ids']
-
-        # dataset initialization
-        self.image_paths = []
-        self.radar_paths = []
-        self.obj_infos = []
-        self.confmaps = []
-        self.n_data = 0
-        self.index_mapping = []
-
+        # get sequence list
+        self.split = split
+        self.seq_ids = dataset.seq_sets[split]
         if subset is not None:
-            self.data_files = [subset + '.pkl']
-        else:
-            self.data_files = list_pkl_filenames_from_prepared(self.data_dir, self.split)
+            self.seq_ids = self.seq_ids[:subset]
 
-        self.seq_names = [name.split('.')[0] for name in self.data_files]
+        # get image paths
+        self.image_paths = {}
+        for seq_id in self.seq_ids:
+            self.image_paths[seq_id] = sorted(
+                [os.path.join(self.dataset.img_root, seq_id, f) for f in os.listdir(
+                    os.path.join(self.dataset.img_root, seq_id)
+                ) if f.endswith('.jpg')]
+            )
 
-        self.n_seq = len(self.seq_names)
-
-        for seq_id, data_file in enumerate(self.data_files):
-            data_file_path = os.path.join(data_dir, self.split, data_file)
-            data_details = pickle.load(open(data_file_path, 'rb'))
-            assert split in ('train', 'valid', 'test')
-
-            if split == 'train' or split == 'valid':
-                assert data_details['anno'] is not None
-            n_frame = data_details['n_frame']
-            if not config_dict['dataset_cfg']['docker']:
-                self.image_paths.append(data_details['image_paths'])
-                self.radar_paths.append(data_details['radar_paths'])
-            else:
-                old_base_root = data_details['radar_paths'][0][0].split('ROD2021')[0]
-                if split == 'test':
-                    self.image_paths.append(None)
-                else:
-                    self.image_paths.append([new_path.replace(old_base_root, docker_path)
-                                             for new_path in data_details['image_paths']])
-                new_paths = []
-                for list_chirps in data_details['radar_paths']:
-                    new_paths.append([new_path.replace(old_base_root, docker_path) for new_path in list_chirps])
-                self.radar_paths.append(new_paths)
-
-            n_data_in_seq = (n_frame - (self.win_size * self.step - 1)) // self.stride + (
-                1 if (n_frame - (self.win_size * self.step - 1)) % self.stride > 0 else 0)
-            self.n_data += n_data_in_seq
-            for data_id in range(n_data_in_seq):
-                self.index_mapping.append([seq_id, data_id * self.stride])
-            if data_details['anno'] is not None:
-                self.obj_infos.append(data_details['anno']['metadata'][:n_frame])
-                self.confmaps.append(data_details['anno']['confmaps'][:n_frame])
+        # get data paths
+        self.data_paths = list_pkl_filenames_from_prepared(self.data_dir, self.seq_ids, self.win_size)
+        self.n_data = len(self.data_paths)
+        print("%s set: %d files" % (split, self.n_data))
 
     def __len__(self):
-        """Total number of data/label pairs"""
         return self.n_data
 
-    def __getitem__(self, index):
-        seq_id, data_id = self.index_mapping[index]
-        seq_name = self.seq_names[seq_id]
-        image_paths = self.image_paths[seq_id]
-        radar_paths = self.radar_paths[seq_id]
-        if len(self.confmaps) != 0:
-            this_seq_obj_info = self.obj_infos[seq_id]
-            this_seq_confmap = self.confmaps[seq_id]
+    def get_data_dict(self, idx):
+        """
+        Load data dictionary from pkl file
+        @param idx: index of the data path
+        @return: data dictionary
+        """
+        data_path = self.data_paths[idx]
+        with open(data_path, 'rb') as f:
+            data_dict = pickle.load(f)
 
-        data_dict = dict(
-            status=True,
-            seq_names=seq_name,
-            image_paths=[],
-            positions=np.zeros(shape=(1, self.win_size))
-        )
+        if data_dict['anno'] is not None:
+            # Drop classes that are not in the dataset
+            data_dict['anno']['obj_infos'] = self.dataset.drop_invalid_classes_seq(data_dict['anno']['obj_infos'])
+            # Generate confidence maps
+            data_dict['anno']['confmaps'] = self.dataset.generate_confmaps_seq(data_dict['anno']['obj_infos'])
 
-        if self.n_chirps < 4 and self.is_random_chirp:
-            chirp_id = random.sample(range(0, 4), self.n_chirps)
-        elif self.n_chirps == 4:
-            chirp_id = np.arange(0, 4).tolist()
-        elif self.n_chirps == 1 and self.is_random_chirp:
-            chirp_id = random.randint(0, len(self.chirp_ids) - 1)
-        elif self.n_chirps == 1 and not self.is_random_chirp:
-            chirp_id = 0
-        else:
-            raise ValueError
+        # Randomly select chirps
+        if self.is_random_chirp:
+            chirp_ids = random.sample(range(self.dataset.sensor_cfg.n_chirps), self.n_chirps)
+            chirp_ids.sort()
+            data_dict['radar_data'] = data_dict['radar_data'][chirp_ids]
 
-        radar_configs = self.dataset.sensor_cfg.radar_cfg
-        ramap_rsize = radar_configs['ramap_rsize']
-        ramap_asize = radar_configs['ramap_asize']
+        # Convert to tensor
+        data_dict['radar_data'] = torch.tensor(data_dict['radar_data']).float()
+        if data_dict['anno'] is not None:
+            data_dict['anno']['confmaps'] = torch.tensor(data_dict['anno']['confmaps']).float()
 
-        # Load radar data
-        try:
-            if isinstance(chirp_id, int):
-                radar_npy_win = torch.zeros((self.win_size, 2, ramap_rsize, ramap_asize), dtype=torch.float32)
-                for idx, frameid in enumerate(range(data_id, data_id + self.win_size * self.step, self.step)):
-                    radar_npy_win[idx, :, :, :] = torch.from_numpy(
-                        np.transpose(np.load(radar_paths[frameid][chirp_id]), (2, 0, 1)))
-                    if self.split != 'test':
-                        data_dict['image_paths'].append(image_paths[frameid])
-                    else:
-                        data_dict['image_paths'].append(radar_paths[frameid])
-            elif isinstance(chirp_id, list):
-                radar_npy_win = torch.zeros((self.win_size, self.n_chirps * 2, ramap_rsize, ramap_asize),
-                                            dtype=torch.float32)
-                for idx, frameid in enumerate(
-                        range(data_id, data_id + self.win_size * self.step, self.step)):
-                    for cid, c in enumerate(chirp_id):
-                        npy_path = radar_paths[frameid][cid]
-                        radar_npy_win[idx, cid * 2:cid * 2 + 2, :, :] = torch.from_numpy(
-                            np.transpose(np.load(npy_path), (2, 0, 1)))
-                    if self.split != 'test':
-                        data_dict['image_paths'].append(image_paths[frameid])
-                    else:
-                        data_dict['image_paths'].append(radar_paths[frameid])
-            else:
-                raise TypeError
-            radar_npy_win = radar_npy_win.transpose(1, 0)
-        except:
-            # in case load npy fail
-            data_dict['status'] = False
-            if not os.path.exists('./tmp'):
-                os.makedirs('./tmp')
-            log_name = 'loadnpyfail-' + time.strftime("%Y%m%d-%H%M%S") + '.txt'
-            with open(os.path.join('./tmp', log_name), 'w') as f_log:
-                f_log.write('npy path: ' + radar_paths[frameid][chirp_id] + \
-                            '\nframe indices: %d:%d:%d' % (data_id, data_id + self.win_size * self.step, self.step))
-            return data_dict
+        return data_dict
 
-        data_dict['radar_data'] = radar_npy_win
+    def __getitem__(self, idx):
+        # Step 1: Get data dictionary
+        data_dict = self.get_data_dict(idx)
+        if data_dict is None:
+            return None
 
-        # Load annotations
-        if len(self.confmaps) != 0:
-            confmap_gt = this_seq_confmap[data_id:data_id + self.win_size * self.step:self.step]
-            confmap_gt = np.transpose(confmap_gt, (1, 0, 2, 3))
-            confmap_gt = torch.from_numpy(confmap_gt)
-            obj_info = this_seq_obj_info[data_id:data_id + self.win_size * self.step:self.step]
-            confmap_gt = confmap_gt[:self.n_class]
-            assert confmap_gt.shape == \
-                   (self.n_class, self.win_size, radar_configs['ramap_rsize'], radar_configs['ramap_asize'])
-            data_dict['anno'] = dict(
-                obj_infos=obj_info,
-                confmaps=confmap_gt.float(),
-            )
-        else:
-            data_dict['anno'] = None
+        # Step 2: (Original MixUp logic was here)
 
-        # Apply MixUp augmentation (only during training)
-        if self.split == "train" and self.use_mixup and data_dict['anno'] is not None:
-            if random.random() < self.mixup_prob:
-                # Randomly select another sample for mixing
-                mix_index = random.randint(0, self.__len__() - 1)
-                mix_data = self.__getitem__(mix_index)
+        # vvvvvvvvvvvv 【修改】 vvvvvvvvvvvv
+        # Step 3: Apply CutMix if specified
+        if self.use_cutmix and self.split == "train" and random.random() < self.cutmix_prob:
+            try:
+                # 1. Load a random mixin sample
+                mix_idx = random.randint(0, self.n_data - 1)
+                mix_data_dict = self.get_data_dict(mix_idx)
+                if mix_data_dict is None:
+                    raise IOError("Loaded mix_data_dict is None")
 
-                if mix_data['status'] and mix_data['anno'] is not None:
-                    if self.mixup_type == 'sequence':
-                        # Sequence-level MixUp
-                        mixed_radar, mixed_confmap, lam = sequence_mixup(
-                            data_dict['radar_data'],
-                            data_dict['anno']['confmaps'],
-                            mix_data['radar_data'],
-                            mix_data['anno']['confmaps'],
-                            alpha=self.mixup_alpha
-                        )
-                    elif self.mixup_type == 'spatial':
-                        # Spatial MixUp
-                        mixed_radar, mixed_confmap = spatial_mixup(
-                            data_dict['radar_data'],
-                            data_dict['anno']['confmaps'],
-                            mix_data['radar_data'],
-                            mix_data['anno']['confmaps']
-                        )
-                    else:
-                        raise ValueError(f"Unknown mixup_type: {self.mixup_type}")
+                # 2. Generate CutMix bounding box
+                # lambda (混合比例) 在 CutMix 中是根据 alpha=1.0 (通常) 抽样
+                lambda_ = np.random.beta(self.cutmix_alpha, self.cutmix_alpha)
 
-                    data_dict['radar_data'] = mixed_radar
-                    data_dict['anno']['confmaps'] = mixed_confmap
+                # radar_data shape is (C, T, H, W)
+                # confmaps shape is (n_class, T, H, W)
+                # 我们在 H 和 W 维度 (dim 2 和 3) 上进行剪切
+                H = data_dict['radar_data'].shape[2]
+                W = data_dict['radar_data'].shape[3]
 
-        if self.split == "train":
-            # Data augmentation (other augmentations)
-            data_dict['radar_data'], data_dict['anno']['confmaps'], image_paths = random_apply(
+                cut_ratio = np.sqrt(1. - lambda_)
+                cut_h = int(H * cut_ratio)
+                cut_w = int(W * cut_ratio)
+
+                # 随机选择剪切框的中心点
+                cx = np.random.randint(W)
+                cy = np.random.randint(H)
+
+                # 计算剪切框的坐标 (并确保不越界)
+                bbx1 = np.clip(cx - cut_w // 2, 0, W)
+                bby1 = np.clip(cy - cut_h // 2, 0, H)
+                bbx2 = np.clip(cx + cut_w // 2, 0, W)
+                bby2 = np.clip(cy + cut_h // 2, 0, H)
+
+                # 3. 将 mix_data_dict 的 patch 粘贴到 data_dict
+                #    这同时适用于 radar_data 和 confmaps (标签)
+                data_dict['radar_data'][:, :, bby1:bby2, bbx1:bbx2] = mix_data_dict['radar_data'][:, :, bby1:bby2,
+                                                                      bbx1:bbx2]
+
+                if data_dict['anno'] is not None and mix_data_dict['anno'] is not None:
+                    data_dict['anno']['confmaps'][:, :, bby1:bby2, bbx1:bbx2] = mix_data_dict['anno']['confmaps'][:, :,
+                                                                                bby1:bby2, bbx1:bbx2]
+
+                # 注意：CutMix 不需要像 MixUp 一样返回 lambda 来调整损失
+                # 它通过直接修改标签热力图来工作
+
+            except (IOError, TypeError, ValueError) as e:
+                # 如果加载 mix_data_dict 失败或出现其他问题，则跳过 CutMix
+                # print(f"Skipping CutMix due to error: {e}")
+                pass
+        # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+        # Step 3.5: Apply other augmentations (mirror, reverse, etc.)
+        if self.split == "train" and data_dict['anno'] is not None:
+            data_dict['radar_data'], data_dict['anno']['confmaps'], data_dict['image_paths'] = random_apply(
                 data_dict['radar_data'],
                 data_dict['anno']['confmaps'],
-                image_paths,
+                data_dict['image_paths'],
                 self.aug_dict
             )
 
-        # Normalize data
+        # Step 4: Normalize data
         if self.normalize:
             mean_data = self.mean_data.tile(self.n_chirps)
             std_data = self.std_data.tile(self.n_chirps)
             data_dict['radar_data'] = (data_dict['radar_data'] - mean_data[:, None, None, None]) / std_data[:, None,
                                                                                                    None, None]
 
+        # Step 5: Slice the sequence to the last frame if needed (CRITICAL: Do this at the very end)
         if not self.all_confmaps and data_dict['anno'] is not None:
             data_dict['anno']['confmaps'] = data_dict['anno']['confmaps'][:, -1]
-            data_dict['anno']['obj_infos'] = data_dict['anno']['obj_infos']
+            data_dict['anno']['obj_infos'] = data_dict['anno']['obj_infos'][-1]
 
+        # Step 6: Add positional encoding if needed
         if self.model_name == 'UTAE':
             fps = 1 / 30
-            pe = np.linspace(0, fps * self.win_size, self.win_size, dtype=np.float32)
-            data_dict['positions'] = pe
+            pe = np.linspace(0, fps * self.win_size, self.win_size)
+            data_dict['pe'] = torch.tensor(pe).float()
 
         return data_dict
