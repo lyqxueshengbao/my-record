@@ -73,7 +73,12 @@ class CruwExecutorOI(CruwExecutor):
         confmap_gts = batch['anno']['confmaps']
         image_paths = batch['image_paths']
         obj_infos = batch['anno']['obj_infos']
-
+        # vvvvvvvv   添加下面的 "重置状态" 逻辑   vvvvvvvvvv
+        seq_name = batch['seq_names'][0]
+        if seq_name != self.current_val_seq:
+            self.model.encoder.__init_hidden__()
+            self.current_val_seq = seq_name
+        # ^^^^^^^^^^   添加上面的 "重置状态" 逻辑   ^^^^^^^^^^
         # Online inference: 每次处理单个时间步
         assert ra_maps.shape[2] == 1 and ra_maps.shape[0] == 1, \
             "Batch size and window size must be one for online inference."
@@ -106,6 +111,11 @@ class CruwExecutorOI(CruwExecutor):
 
         # Get seq name to write results
         seq_name = batch['seq_names'][0]
+        # vvvvvvvv   添加下面的 "重置状态" 逻辑   vvvvvvvvvv
+        if seq_name != self.current_test_seq:
+            self.model.encoder.__init_hidden__()
+            self.current_test_seq = seq_name
+        # ^^^^^^^^^^   添加上面的 "重置状态" 逻辑   ^^^^^^^^^^
         if confmap_gts is not None:
             confmap_gts = batch['anno']['confmaps'].float()
             save_dir = os.path.join(self.val_res_dir)
