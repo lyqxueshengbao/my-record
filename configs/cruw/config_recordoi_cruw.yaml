@@ -97,27 +97,46 @@ confmap_cfg:
     cyclist: 2
     car: 3
 train_cfg:
-  ckpt_dir: logs/rod2021
+  ckpt_dir: logs/rod2021_oi_focaloss+mixednorm+eca+cutmix
   n_epoch: 100
   batch_size: 8
   accumulate_grad: 2
   lr: 0.0003
   optimizer: adam
   scheduler: exp
-  loss: bce
+
+  # ===== 损失函数配置 (与buffer模型保持一致) =====
+  # 损失函数选择: 'bce', 'focal', 'smooth_focal', 'mse', 'smooth_ce'
+  loss: focal  # 使用 Focal Loss
+
+  # Focal Loss 参数
+  focal_alpha: 0.25  # 平衡正负样本权重 (default: 0.25)
+  focal_gamma: 2.0   # 聚焦参数，降低易分类样本的权重 (default: 2.0)
+
+  # 如果使用 smooth_focal 或 smooth_ce
   alpha_loss: 0.5
-  win_size: 32
+
+  # ===== CutMix数据增强配置 (新增) =====
+  use_cutmix: true      # 启用CutMix增强
+  cutmix_alpha: 1.0     # CutMix的Beta分布参数 (1.0是常用默认值)
+  cutmix_prob: 0.5      # 执行CutMix的概率 (50%的batch会应用CutMix)
+
+  # ===== Online模式训练参数 =====
+  win_size: 32          # 时间窗口大小 (逐帧训练)
   train_step: 1
   train_stride: 8
+
   use_ampl: false
   normalize: false
   train_log_step: 1000
   val_log_step: 100
   test_log_step: 200
+
+  # ===== 其他数据增强 =====
   aug:
-    mirror: 0.5
-    reverse: 0.5
-    gaussian: 0.0
+    mirror: 0.5       # 镜像翻转概率
+    reverse: 0.5      # 时间反转概率
+    gaussian: 0.0     # 高斯噪声
 test_cfg:
   test_step: 1
   test_stride: 1
