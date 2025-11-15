@@ -38,6 +38,9 @@ class RecordOI(nn.Module):
         )
 
         self.sigmoid = nn.Sigmoid()
+        # vvvvvvvvvv   添加下面这行代码   vvvvvvvvvv
+        self.encoder.__init_hidden__()
+        # ^^^^^^^^^^   添加上面这行代码   ^^^^^^^^^^
 
     def forward(self, x):
         """
