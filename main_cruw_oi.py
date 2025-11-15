@@ -98,7 +98,8 @@ trainer = pl.Trainer(
     devices=6,       # <-- 从 main_cruw.py 移植 (你服务器的GPU数量)
     max_epochs=train_cfg['n_epoch'],
     deterministic=deterministic,
-    accumulate_grad_batches=train_cfg['accumulate_grad'] # <-- 保留这个
+    accumulate_grad_batches=train_cfg['accumulate_grad'], # <-- 保留这个
+    sync_batchnorm=True
 )
 
 print('Start training')
