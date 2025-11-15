@@ -88,9 +88,18 @@ if torch.cuda.is_available():
 else:
     print('WARNING: CUDA not available, use CPU')
     accelerator = 'cpu'
-trainer = pl.Trainer(logger=logger, callbacks=callbacks, accelerator=accelerator, devices=1,
-                     max_epochs=train_cfg['n_epoch'], deterministic=deterministic,
-                     accumulate_grad_batches=train_cfg['accumulate_grad'])
+# (替换 main_cruw_oi.py 中的 pl.Trainer 初始化)
+
+trainer = pl.Trainer(
+    logger=logger,
+    callbacks=callbacks,
+    accelerator=accelerator,
+    strategy='ddp',  # <-- 从 main_cruw.py 移植
+    devices=6,       # <-- 从 main_cruw.py 移植 (你服务器的GPU数量)
+    max_epochs=train_cfg['n_epoch'],
+    deterministic=deterministic,
+    accumulate_grad_batches=train_cfg['accumulate_grad'] # <-- 保留这个
+)
 
 print('Start training')
 trainer.fit(model, ckpt_path=args.resume_ckpt)
