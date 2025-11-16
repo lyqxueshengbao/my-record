@@ -59,9 +59,6 @@ class CruwExecutor(pl.LightningModule):
         # For testing on val set
         self.evalImgs_all = []
         self.n_frames_all = 0
-        # 添加以下两行
-        self.val_frame_counter = 0
-        self.test_frame_counter = 0
 
     def get_loss(self):
         """
