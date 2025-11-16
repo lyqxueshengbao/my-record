@@ -97,10 +97,10 @@ confmap_cfg:
     cyclist: 2
     car: 3
 train_cfg:
-  ckpt_dir: logs/rod2021_OI
+  ckpt_dir: logs/rod2021_OI_1
   n_epoch: 100
-  batch_size: 2
-  accumulate_grad: 8
+  batch_size: 8
+  accumulate_grad: 2
   lr: 0.0018
   optimizer: adam
   scheduler: exp
