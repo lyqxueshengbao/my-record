@@ -55,7 +55,7 @@ class CruwExecutorOI(CruwExecutor):
         obj_infos = batch['anno']['obj_infos']
 
         assert ra_maps.shape[2] == 1 and ra_maps.shape[0] == 1, "Batch size and window size must be one for inference."
-        confmap_pred = self.forward(ra_maps[:, :, 0])
+        confmap_pred = self.forward(ra_maps[:, :, 0:1])
 
         loss = self.loss_fct(confmap_pred, confmap_gts[:, :, 0])
 
