@@ -40,7 +40,7 @@ class CruwExecutorOI(CruwExecutor):
         @return: validation dataloader for ROD2021 dataset
         """
         return DataLoader(self.val_dataset, batch_size=1, collate_fn=cr_collate,
-                          shuffle=False, num_workers=12, pin_memory=True,persistent_workers=True,prefetch_factor=6,drop_last=True)
+                          shuffle=False, num_workers=4, drop_last=True)
 
     def validation_step(self, batch, batch_id):
         """
@@ -49,10 +49,6 @@ class CruwExecutorOI(CruwExecutor):
         @param batch_id: id of the current batch
         """
         # Get data
-        if batch_id == 0:
-            import multiprocessing as mp
-            print(f"⚠️ 当前活跃进程数: {mp.active_children()}")
-            print(f"⚠️ 应该看到 {self.val_dataloader().num_workers} 个 worker 进程")
         ra_maps = batch['radar_data']  # N, H, W, C
         confmap_gts = batch['anno']['confmaps']
         image_paths = batch['image_paths']
