@@ -49,6 +49,10 @@ class CruwExecutorOI(CruwExecutor):
         @param batch_id: id of the current batch
         """
         # Get data
+        if batch_id == 0:
+            import multiprocessing as mp
+            print(f"⚠️ 当前活跃进程数: {mp.active_children()}")
+            print(f"⚠️ 应该看到 {self.val_dataloader().num_workers} 个 worker 进程")
         ra_maps = batch['radar_data']  # N, H, W, C
         confmap_gts = batch['anno']['confmaps']
         image_paths = batch['image_paths']
