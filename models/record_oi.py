@@ -25,7 +25,8 @@ class RecordOI(nn.Module):
         self.encoder = RecordEncoder(config=config['encoder_config'], in_channels=in_channels, norm=norm)
         self.decoder = RecordDecoder(config=config['decoder_config'], n_class=n_class)
         self.sigmoid = nn.Sigmoid()
-
+        # 初始化隐藏状态（修复原作者遗漏的 bug）
+        self.encoder.__init_hidden__()
     def forward(self, x):
         """
         Forward pass RECORD-OI model
@@ -36,3 +37,11 @@ class RecordOI(nn.Module):
         confmap_pred = self.decoder(st_features_lstm1, st_features_lstm2, st_features_backbone)
         return self.sigmoid(confmap_pred)
 
+    def reset_hidden(self):
+        """
+        重置隐藏状态
+        用于：
+        1. 开始处理新的视频序列
+        2. 处理独立的、不相关的帧
+        """
+        self.encoder.__init_hidden__()
