@@ -106,17 +106,17 @@ trainer.fit(model, ckpt_path=args.resume_ckpt)
 print("Start evaluation")
 data_root = config_dict['dataset_cfg']['data_root']
 
-if args.test_on_val:
-    print('Set for evaluation: VALIDATION')
-    eval_on_val(trainer=trainer, executor=model, dataset=dataset, data_root=config_dict['dataset_cfg']['data_root'],
-                config_dict=config_dict, all_confmaps=True)
-elif args.test_all:
-    eval_on_val(trainer=trainer, executor=model, dataset=dataset, data_root=config_dict['dataset_cfg']['data_root'],
-                config_dict=config_dict, all_confmaps=True, ckpt_path='best')
-    eval_on_test(trainer=trainer, executor=model, dataset=dataset, data_root=config_dict['dataset_cfg']['data_root'],
-                 config_dict=config_dict, all_confmaps=True, ckpt_path='best')
-else:    
-    eval_on_test(trainer=trainer, executor=model, dataset=dataset, data_root=config_dict['dataset_cfg']['data_root'],
-                 config_dict=config_dict, all_confmaps=True, ckpt_path='best')
+# if args.test_on_val:
+#     print('Set for evaluation: VALIDATION')
+#     eval_on_val(trainer=trainer, executor=model, dataset=dataset, data_root=config_dict['dataset_cfg']['data_root'],
+#                 config_dict=config_dict, all_confmaps=True)
+# elif args.test_all:
+#     eval_on_val(trainer=trainer, executor=model, dataset=dataset, data_root=config_dict['dataset_cfg']['data_root'],
+#                 config_dict=config_dict, all_confmaps=True, ckpt_path='best')
+#     eval_on_test(trainer=trainer, executor=model, dataset=dataset, data_root=config_dict['dataset_cfg']['data_root'],
+#                  config_dict=config_dict, all_confmaps=True, ckpt_path='best')
+# else:
+#     eval_on_test(trainer=trainer, executor=model, dataset=dataset, data_root=config_dict['dataset_cfg']['data_root'],
+#                  config_dict=config_dict, all_confmaps=True, ckpt_path='best')
 
 print('Training finished.')
