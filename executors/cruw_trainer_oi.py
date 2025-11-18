@@ -92,7 +92,10 @@ class CruwExecutorOI(CruwExecutor):
             start_frame_name = image_paths[0][0][0].split('/')[-1].split('.')[0].split('_')[0]
             frame_name = image_paths[0][-1][0].split('/')[-1].split('.')[0].split('_')[0]
             frame_id = int(frame_name)
-
+        # === 【建议添加】安全检查：如果是视频的第一帧，强制重置 LSTM 状态 ===
+        if frame_id == 0:
+            self.model.encoder.__init_hidden__()
+        # ==============================================================
         assert ra_maps.shape[2] == 1 and ra_maps.shape[0] == 1, "Batch size and window size must be one for inference."
         confmap_pred = self.forward(ra_maps[:, :, 0])
 
