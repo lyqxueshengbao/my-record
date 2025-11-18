@@ -7,79 +7,83 @@ class RecordOI(nn.Module):
     def __init__(self, config, in_channels=8, norm='layer', n_class=3):
         super(RecordOI, self).__init__()
 
-        # 1. Encoder 配置 (保持 bn 以加载权重)
         self.encoder = RecordEncoder(config=config['encoder_config'],
                                      in_channels=in_channels,
                                      norm_stem='bn',
                                      norm_recurrent=norm)
 
-        # 2. Decoder 配置
         self.decoder = RecordDecoder(config=config['decoder_config'],
                                      n_class=n_class,
                                      norm_decoder=norm)
 
         self.sigmoid = nn.Sigmoid()
 
-        # 3. 初始化状态 (修复 Bug)
-        self.encoder.__init_hidden__()
+        # ✅ 正确方式：初始化为 None，让 forward 自动处理
+        self.reset_hidden()
+
+    def load_buffer_weights_and_freeze_bn(self, checkpoint_path):
+        """加载 Buffer 权重并完全冻结 BN"""
+        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        self.load_state_dict(checkpoint['state_dict'], strict=True)
+        self.freeze_bn_layers()
+        print("✅ Loaded weights and frozen BN layers")
+
+    def freeze_bn_layers(self):
+        """完全冻结所有 BN 层"""
+        for module in self.encoder.stem.modules():
+            if isinstance(module, (nn.BatchNorm2d, nn.SyncBatchNorm)):
+                module.eval()
+                module.track_running_stats = False  # 停止更新统计量
+                for param in module.parameters():
+                    param.requires_grad = False  # 冻结参数
+
+    def train(self, mode=True):
+        """重写 train 方法，确保 BN 始终冻结"""
+        super().train(mode)
+        if mode:
+            self.freeze_bn_layers()
+        return self
 
     def forward(self, x):
         """
         Forward pass for Online Inference (Single Frame)
         x shape: (B, C, H, W)
         """
-        # === 关键修改开始 ===
-        # 不再调用 self.encoder(x)，而是分步调用以适配 Mixed Norm Encoder
-
-        # 1. 执行 Stem 部分 (BN)
-        # x: (B, C, H, W)
+        # 1. Stem 部分（BN）
         stem_features = self.encoder.forward_stem(x)
+        # stem_features shape: (B, C', H', W')
 
-        # 2. 执行 Recurrent 部分 (GN + LSTM)
-        # 使用 encoder 内部保存的 h_list 和 c_list
-        # 如果是刚开始 (None)，则初始化
-        if self.encoder.h_list[0] is None:
-            self.encoder.__init_hidden__()
+        # 2. 检查并初始化隐藏状态
+        B, C, H, W = stem_features.shape
 
-        (st_features_backbone,
-         st_features_lstm2,
-         st_features_lstm1), h_list, c_list = self.encoder.forward_recurrent_step(
-            stem_features,
-            self.encoder.h_list,
-            self.encoder.c_list
-        )
+        # ✅ 正确的初始化逻辑
+        if self.encoder.h_list[0] is None or self.encoder.h_list[0].shape[0] != B:
+            # 根据实际的 stem_features 形状初始化
+            self.encoder.__init_hidden__(batch_size=B, spatial_size=(H, W))
 
-        # 3. 更新状态
-        # 注意：这里将更新后的状态存回 self.encoder，供下一帧使用
+        # 3. Recurrent 部分（GN + LSTM）
+        (st_features_backbone, st_features_lstm2, st_features_lstm1), h_list, c_list = \
+            self.encoder.forward_recurrent_step(
+                stem_features,
+                self.encoder.h_list,
+                self.encoder.c_list
+            )
+
+        # 4. 更新隐藏状态
         self.encoder.h_list = h_list
         self.encoder.c_list = c_list
-        # === 关键修改结束 ===
 
-        # 4. Decoder
+        # 5. Decoder
         confmap_pred = self.decoder(st_features_backbone, st_features_lstm2, st_features_lstm1)
         return self.sigmoid(confmap_pred)
 
-    # 将此方法添加到 models/record_oi.py 的 RecordOI 类中
-    def train(self, mode=True):
-        """
-        重写 train 方法：
-        在进入 Training 模式时，强制将 Encoder Stem 部分的 BN 层保持在 Eval 模式。
-        这能防止因 Batch Size 过小导致的统计量崩坏，保护预训练权重。
-        """
-        super().train(mode)  # 先让全网进入 mode 指定的状态
-
-        if mode:  # 只有在切换到 Training 状态时才需要干预
-            # 遍历 Encoder Stem (BN部分) 的所有层
-            for m in self.encoder.stem.modules():
-                # 如果是 BN 层，强行按住它的头，不让它动
-                if isinstance(m, (nn.BatchNorm2d, nn.SyncBatchNorm)):
-                    m.eval()
-
-            # (可选) 如果你想更彻底一点，连 BN 的 γ 和 β 参数都不让学，可以加上这句：
-            # for param in self.encoder.stem.parameters():
-            #     param.requires_grad = False
-
-            # 打印一次提示，确保你看到了它生效
-            # print("Info: Stem BN layers frozen in EVAL mode for Online Training.")
     def reset_hidden(self):
-        self.encoder.__init_hidden__()
+        """
+        重置隐藏状态为未初始化状态
+        用于：
+        1. 开始处理新的视频序列
+        2. 切换到不相关的帧流
+        """
+        # ✅ 正确方式：设置为 None，而不是用默认值初始化
+        self.encoder.h_list = [None, None]  # 假设有两个 LSTM 层
+        self.encoder.c_list = [None, None]
