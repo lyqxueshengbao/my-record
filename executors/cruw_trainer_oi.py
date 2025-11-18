@@ -6,7 +6,6 @@ from datasets.cruw.collate_functions import cr_collate
 from evaluation.postprocess import post_process_single_frame_cruw, write_dets_results_single_frame
 from cruw.eval.rod.rod_eval_utils import accumulate, summarize
 
-
 class CruwExecutorOI(CruwExecutor):
 
     def training_step(self, batch, batch_id):
@@ -17,30 +16,19 @@ class CruwExecutorOI(CruwExecutor):
         @return: loss value to log
         """
         # Get data
-        ra_maps = batch['radar_data']  # N, C, T, H, W
-        confmap_gts = batch['anno']['confmaps']  # N, 1, T, H, W
+        ra_maps = batch['radar_data']  # N, H, W, C
+        confmap_gts = batch['anno']['confmaps']
         image_paths = batch['image_paths']
-
         total_loss = 0
-        T = ra_maps.shape[2]
-
-        for t in range(T):
+        for t in range(ra_maps.shape[2]):
             if t == 0:
                 self.model.encoder.__init_hidden__()
-
-            # 🔥 关键修改：保持5维
-            confmap_pred = self.model(ra_maps[:, :, t:t + 1])  # (N, C, 1, H, W)
-            confmap_gt = confmap_gts[:, :, t:t + 1]  # (N, 1, 1, H, W)
-
-            # 如果损失函数需要4维，在这里squeeze
-            loss = self.loss_fct(confmap_pred.squeeze(2), confmap_gt.squeeze(2))
-            # 或者如果损失函数支持5维：
-            # loss = self.loss_fct(confmap_pred, confmap_gt)
-
+            confmap_pred = self.model(ra_maps[:, :, t])
+            loss = self.loss_fct(confmap_pred, confmap_gts[:, :, t])
             total_loss += loss
 
-        # Loss averaging over frames
-        total_loss = total_loss / T
+        #TODO: loss depending on the frames
+        total_loss = total_loss / ra_maps.shape[2]
         self.log('train_loss', total_loss, on_step=True, on_epoch=True, logger=True)
         self.log('hp/train_loss', total_loss, on_epoch=True)
 
@@ -61,21 +49,15 @@ class CruwExecutorOI(CruwExecutor):
         @param batch_id: id of the current batch
         """
         # Get data
-        ra_maps = batch['radar_data']  # N, C, T, H, W
-        confmap_gts = batch['anno']['confmaps']  # N, 1, T, H, W
+        ra_maps = batch['radar_data']  # N, H, W, C
+        confmap_gts = batch['anno']['confmaps']
         image_paths = batch['image_paths']
         obj_infos = batch['anno']['obj_infos']
 
         assert ra_maps.shape[2] == 1 and ra_maps.shape[0] == 1, "Batch size and window size must be one for inference."
+        confmap_pred = self.forward(ra_maps[:, :, 0])
 
-        # 🔥 关键修改：保持5维
-        confmap_pred = self.forward(ra_maps[:, :, 0:1])  # (1, C, 1, H, W)
-        confmap_gt = confmap_gts[:, :, 0:1]  # (1, 1, 1, H, W)
-
-        # 如果损失函数需要4维
-        loss = self.loss_fct(confmap_pred.squeeze(2), confmap_gt.squeeze(2))
-        # 或者如果损失函数支持5维：
-        # loss = self.loss_fct(confmap_pred, confmap_gt)
+        loss = self.loss_fct(confmap_pred, confmap_gts[:, :, 0])
 
         self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=False, logger=True)
         self.log('hp/val_loss', loss, on_epoch=True)
@@ -86,7 +68,7 @@ class CruwExecutorOI(CruwExecutor):
         @param batch: data batch from the dataloader
         @param batch_id: id of the current batch
         """
-        ra_maps = batch['radar_data']  # N, C, T, H, W
+        ra_maps = batch['radar_data']
         image_paths = batch['image_paths']
         confmap_gts = batch['anno']
 
@@ -112,10 +94,7 @@ class CruwExecutorOI(CruwExecutor):
             frame_id = int(frame_name)
 
         assert ra_maps.shape[2] == 1 and ra_maps.shape[0] == 1, "Batch size and window size must be one for inference."
-
-        # 🔥 关键修改：保持5维
-        confmap_pred = self.forward(ra_maps[:, :, 0:1])  # (1, C, 1, H, W)
-        confmap_pred = confmap_pred.squeeze(2)  # (1, C, H, W) - 用于后处理
+        confmap_pred = self.forward(ra_maps[:, :, 0])
 
         # Write results
         res_final = post_process_single_frame_cruw(confmap_pred[0].cpu(), self.cruw_dataset_obj, self.config)
@@ -124,11 +103,10 @@ class CruwExecutorOI(CruwExecutor):
     def evaluate_rodnet_(self):
         ols_thrs = np.around(np.linspace(0.5, 0.9, int(np.round((0.9 - 0.5) / 0.05) + 1), endpoint=True), decimals=2)
         rec_thrs = np.around(np.linspace(0.0, 1.0, int(np.round((1.0 - 0.0) / 0.01) + 1), endpoint=True), decimals=2)
-        out_eval = accumulate(self.evalImgs_all, self.n_frames_all, ols_thrs, rec_thrs, self.cruw_dataset_obj,
-                              log=False)
+        out_eval = accumulate(self.evalImgs_all, self.n_frames_all, ols_thrs, rec_thrs, self.cruw_dataset_obj, log=False)
         stats = summarize(out_eval, ols_thrs, rec_thrs, self.cruw_dataset_obj, gl=False)
         self.logger.log_metrics({"AP/Overall": stats[0] * 100,
-                                 "AR/Overall": stats[1] * 100})
+                   "AR/Overall": stats[1] * 100})
 
         self.logger.log_metrics({"hp/AP": stats[0] * 100,
                                  "hp/AR": stats[1] * 100})
@@ -138,7 +116,6 @@ class CruwExecutorOI(CruwExecutor):
 
     def on_test_start(self):
         self.model.encoder.__init_hidden__()
-
     def on_validation_end(self):
         self.model.encoder.__init_hidden__()
 
