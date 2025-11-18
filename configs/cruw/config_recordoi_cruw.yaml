@@ -97,7 +97,7 @@ confmap_cfg:
     cyclist: 2
     car: 3
 train_cfg:
-  ckpt_dir: logs/rod2021_oi_bceloss_mixednorm_layer
+  ckpt_dir: logs/rod2021_oi_bceloss_mixednorm
   n_epoch: 100
   batch_size: 3
   accumulate_grad: 6
