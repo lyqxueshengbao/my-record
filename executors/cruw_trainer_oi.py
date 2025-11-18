@@ -1,3 +1,7 @@
+#
+# 完整文件: executors/cruw_trainer_oi.py
+# (已修复：添加了视频切换时的状态重置逻辑)
+#
 from .cruw_trainer import CruwExecutor
 import os
 import numpy as np
@@ -7,6 +11,12 @@ from evaluation.postprocess import post_process_single_frame_cruw, write_dets_re
 from cruw.eval.rod.rod_eval_utils import accumulate, summarize
 
 class CruwExecutorOI(CruwExecutor):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # vvvvvvvvvvvvvvvv 【新增】 vvvvvvvvvvvvvvvv
+        # 记录上一个 batch 的序列名，用于检测是否切换了视频
+        self.last_seq_name = None
+        # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
     def training_step(self, batch, batch_id):
         """
@@ -54,6 +64,9 @@ class CruwExecutorOI(CruwExecutor):
         image_paths = batch['image_paths']
         obj_infos = batch['anno']['obj_infos']
 
+        # 为了安全，验证集每帧重置（验证集通常不要求严格的连续状态继承）
+        self.model.encoder.__init_hidden__()
+
         assert ra_maps.shape[2] == 1 and ra_maps.shape[0] == 1, "Batch size and window size must be one for inference."
         confmap_pred = self.forward(ra_maps[:, :, 0])
 
@@ -74,6 +87,16 @@ class CruwExecutorOI(CruwExecutor):
 
         # Get seq name to write results
         seq_name = batch['seq_names'][0]
+
+        # vvvvvvvvvvvvvvvv 【关键修复】 vvvvvvvvvvvvvvvv
+        # 如果当前序列名和上一次不一样，说明换视频了，必须重置 LSTM 状态！
+        # 否则模型会把视频B当成视频A的后续，导致推理崩盘。
+        if seq_name != self.last_seq_name:
+            # print(f"Switching sequence: {self.last_seq_name} -> {seq_name}. Resetting LSTM states.")
+            self.model.encoder.__init_hidden__()
+            self.last_seq_name = seq_name
+        # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
         if confmap_gts is not None:
             confmap_gts = batch['anno']['confmaps'].float()
             save_dir = os.path.join(self.val_res_dir)
@@ -113,9 +136,12 @@ class CruwExecutorOI(CruwExecutor):
 
     def on_validation_start(self):
         self.model.encoder.__init_hidden__()
+        self.last_seq_name = None # Reset tracker
 
     def on_test_start(self):
         self.model.encoder.__init_hidden__()
+        self.last_seq_name = None # Reset tracker
+
     def on_validation_end(self):
         self.model.encoder.__init_hidden__()
 
