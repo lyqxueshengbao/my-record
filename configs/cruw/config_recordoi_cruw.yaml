@@ -99,13 +99,13 @@ confmap_cfg:
 train_cfg:
   ckpt_dir: logs/rod2021_oi_bceloss_mixednorm+buffer_nobn2
   n_epoch: 100
-  batch_size: 3
-  accumulate_grad: 6
+  batch_size: 1
+  accumulate_grad: 1
   lr: 0.0018
   optimizer: adam
   scheduler: exp
   # 损失函数选择: 'bce', 'focal', 'smooth_focal', 'mse', 'smooth_ce'
-  loss: bce  # 改为使用 Focal Loss
+  loss: focal  # 改为使用 Focal Loss
   # Focal Loss 参数
   focal_alpha: 0.25  # 平衡正负样本权重 (default: 0.25)
   focal_gamma: 2.0   # 聚焦参数，降低易分类样本的权重 (default: 2.0)
