@@ -36,7 +36,7 @@ class RecordOI(nn.Module):
         # norm_recurrent: 'layer' (GroupNorm(1)) - 用于 LSTM 之后和 LSTM 内部
         self.encoder = RecordEncoder(config=config['encoder_config'],
                                      in_channels=in_channels,
-                                     norm_stem='bn',
+                                     norm_stem='layer',
                                      norm_recurrent=norm)
 
         # Decoder 必须使用 'layer' (GN(1)) 因为它只在最后一个时间步运行 (批次为 B)
