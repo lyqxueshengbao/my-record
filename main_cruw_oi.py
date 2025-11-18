@@ -87,8 +87,23 @@ else:
 
 
 # Create dataloaders
-train_dataset = ROD2021Dataset(config_dict=config_dict, split='train')
-valid_dataset = ROD2021Dataset(config_dict=config_dict, split='valid')
+# 1. 实例化 CRUW 对象 (ROD2021Dataset 需要这个对象来读取传感器配置)
+cruw_dataset = CRUW(data_root=config_dict['dataset_cfg']['base_root'],
+                    sensor_config_name='sensor_config_rod2021')
+
+# 2. 获取 prepared data 的路径
+data_dir = config_dict['dataset_cfg']['data_root']
+
+# 3. 正确实例化 Dataset (补上 data_dir 和 dataset 参数)
+train_dataset = ROD2021Dataset(data_dir=data_dir,
+                               dataset=cruw_dataset,
+                               config_dict=config_dict,
+                               split='train')
+
+valid_dataset = ROD2021Dataset(data_dir=data_dir,
+                               dataset=cruw_dataset,
+                               config_dict=config_dict,
+                               split='valid')
 
 # Create executor
 executor = Model(model=model_instance, train_dataset=train_dataset, val_dataset=valid_dataset,
