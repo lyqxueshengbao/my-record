@@ -34,7 +34,7 @@ class RecordOI(nn.Module):
         for module in self.encoder.stem.modules():
             if isinstance(module, (nn.BatchNorm2d, nn.SyncBatchNorm)):
                 module.eval()
-                module.track_running_stats = False
+                module.track_running_stats = True
                 for param in module.parameters():
                     param.requires_grad = False
 
