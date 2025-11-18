@@ -59,5 +59,27 @@ class RecordOI(nn.Module):
         confmap_pred = self.decoder(st_features_backbone, st_features_lstm2, st_features_lstm1)
         return self.sigmoid(confmap_pred)
 
+    # 将此方法添加到 models/record_oi.py 的 RecordOI 类中
+    def train(self, mode=True):
+        """
+        重写 train 方法：
+        在进入 Training 模式时，强制将 Encoder Stem 部分的 BN 层保持在 Eval 模式。
+        这能防止因 Batch Size 过小导致的统计量崩坏，保护预训练权重。
+        """
+        super().train(mode)  # 先让全网进入 mode 指定的状态
+
+        if mode:  # 只有在切换到 Training 状态时才需要干预
+            # 遍历 Encoder Stem (BN部分) 的所有层
+            for m in self.encoder.stem.modules():
+                # 如果是 BN 层，强行按住它的头，不让它动
+                if isinstance(m, (nn.BatchNorm2d, nn.SyncBatchNorm)):
+                    m.eval()
+
+            # (可选) 如果你想更彻底一点，连 BN 的 γ 和 β 参数都不让学，可以加上这句：
+            # for param in self.encoder.stem.parameters():
+            #     param.requires_grad = False
+
+            # 打印一次提示，确保你看到了它生效
+            # print("Info: Stem BN layers frozen in EVAL mode for Online Training.")
     def reset_hidden(self):
         self.encoder.__init_hidden__()
