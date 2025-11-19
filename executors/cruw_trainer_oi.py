@@ -91,8 +91,8 @@ class CruwExecutorOI(CruwExecutor):
             os.makedirs(save_dir)
         save_path = os.path.join(save_dir, seq_name.upper() + ".txt")
         # =========================================================
-        if frame_id % 12 == 0:
-            self.model.encoder.__init_hidden__()
+        # if frame_id % 12 == 0:
+        #     self.model.encoder.__init_hidden__()
         # =========================================================
         assert ra_maps.shape[2] == 1 and ra_maps.shape[0] == 1, "Batch size and window size must be one for inference."
         confmap_pred = self.forward(ra_maps[:, :, 0])
