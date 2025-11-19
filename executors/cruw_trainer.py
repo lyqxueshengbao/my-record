@@ -112,14 +112,12 @@ class CruwExecutor(pl.LightningModule):
         self.logger.log_hyperparams(self.hparams, {"hp/AP": 0, "hp/AR": 0, "hp/val_loss": 0, "hp/train_loss": 0})
 
     def forward(self, x):
-        """
-        Pytorch Lightning forward pass (inference)
-        """
-        # === 修改点：这里需要解包，只返回预测结果 ===
-        # 原代码: confmap_pred = self.model(x)
-        # 新代码:
-        confmap_pred, _, _ = self.model(x)
-
+        out = self.model(x)
+        # 兼容逻辑：Buffer 返回元组，Online 返回 Tensor
+        if isinstance(out, tuple):
+            confmap_pred = out[0]
+        else:
+            confmap_pred = out
         return confmap_pred
 
     def on_train_epoch_start(self):
