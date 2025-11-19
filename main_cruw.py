@@ -17,6 +17,8 @@ def parse_args():
     parser.add_argument('--config', type=str, help='configuration file path')
     parser.add_argument('--test_on_val', action='store_true', help='Eval only on val set (default is test)')
     parser.add_argument('--test_all', action='store_true', help='Eval on val and on test sets')
+    parser.add_argument('--finetune_from', type=str,
+                        help='Path to checkpoint to load weights from (Stage 2 Fine-tuning)')
     #parser.add_argument('--deterministic', action='store_true', help='Apply deterministic CUDA ops for reproducibility')
     parser.add_argument('--seed', type=int, help='Seed to use for training the model')
     parser.add_argument('--resume_ckpt', type=str, help='Path to the checkpoint to resume the training')
@@ -44,7 +46,21 @@ dataset_cfg = config_dict['dataset_cfg']
 # Load model
 model_instance = get_models(model_cfg)
 model_name = model_cfg['name']
+# === 新增：如果是微调，手动加载权重 ===
+if args.finetune_from:
+    print(f">>> Loading weights from {args.finetune_from} for Fine-tuning (Epoch 0)...")
+    checkpoint = torch.load(args.finetune_from, map_location='cpu')
 
+    # 处理 state_dict 的 key (移除 'model.' 前缀等兼容性处理)
+    state_dict = checkpoint['state_dict'] if 'state_dict' in checkpoint else checkpoint
+    new_state_dict = {}
+    for k, v in state_dict.items():
+        name = k[6:] if k.startswith('model.') else k  # 移除 PL 的 'model.' 前缀
+        new_state_dict[name] = v
+
+    # 加载权重 (strict=False 以防微调时有些层结构微调)
+    model_instance.load_state_dict(new_state_dict, strict=True)
+# ======================================
 # Init CRUW dataset utils
 dataset = CRUW(data_root=config_dict['dataset_cfg']['base_root'],
                sensor_config_name=config_dict['model_cfg']['sensor_config'])
@@ -93,8 +109,11 @@ else:
     print('WARNING: CUDA not available, use CPU')
     accelerator = 'cpu'
 trainer = pl.Trainer(logger=logger, callbacks=callbacks, accelerator=accelerator, strategy='ddp', devices=6,
-                     max_epochs=train_cfg['n_epoch'], deterministic=deterministic)
+                     max_epochs=train_cfg['n_epoch'], deterministic=deterministic,accumulate_grad_batches=train_cfg['accumulate_grad'])
+# 只有当真正需要 Resume (断点续传) 时才传 ckpt_path
+ckpt_path_arg = args.resume_ckpt if args.resume_ckpt else None
 
+trainer.fit(model, ckpt_path=ckpt_path_arg)
 print('Start training')
 trainer.fit(model, ckpt_path=args.resume_ckpt)
 
