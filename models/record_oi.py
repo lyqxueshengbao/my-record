@@ -1,63 +1,84 @@
+import torch
 from torch import nn
-# 确保 record.py 和 record_oi.py 在同一个 models 包下
 from .record import RecordEncoder, RecordDecoder
 
 
 class RecordOI(nn.Module):
     def __init__(self, config, in_channels=8, norm='layer', n_class=3):
-        """
-        RECurrent Online object detectOR (RECORD) model class for online inference
-        适配 Hybrid Norm: Stem 使用 BN, Recurrent/Decoder 使用 LayerNorm/GN
-        """
         super(RecordOI, self).__init__()
 
-        # 1. 修改 Encoder 初始化
-        # 注意：record.py 中 RecordEncoder 的参数顺序变了，且增加了 norm_stem/norm_recurrent
-        # 我们强制 stem 用 'bn' (与训练保持一致), recurrent 部分用传入的 norm (通常是 'layer')
-        self.encoder = RecordEncoder(
-            in_channels=in_channels,
-            config=config['encoder_config'],
-            norm_stem='bn',  # 关键：保持 Stem 为 BN
-            norm_recurrent=norm  # Recurrent 部分跟随配置
-        )
+        self.encoder = RecordEncoder(config=config['encoder_config'],
+                                     in_channels=in_channels,
+                                     norm_stem='bn',
+                                     norm_recurrent=norm)
 
-        # 2. 修改 Decoder 初始化
-        # 传入 norm_decoder 参数，确保 Decoder 里的 Skip Connection 也能用到正确的归一化
-        self.decoder = RecordDecoder(
-            config=config['decoder_config'],
-            n_class=n_class,
-            norm_decoder=norm
-        )
+        self.decoder = RecordDecoder(config=config['decoder_config'],
+                                     n_class=n_class,
+                                     norm_decoder=norm)
 
         self.sigmoid = nn.Sigmoid()
 
+        # ✅ 调用 __init_hidden__() 只是设置为 None
+        # 实际初始化会在 BottleneckLSTM 内部自动完成
+        self.encoder.__init_hidden__()
+
+    def load_buffer_weights_and_freeze_bn(self, checkpoint_path):
+        """加载 Buffer 权重并完全冻结 BN"""
+        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        self.load_state_dict(checkpoint['state_dict'], strict=True)
+        self.freeze_bn_layers()
+        print("✅ Loaded weights and frozen BN layers")
+
+    def freeze_bn_layers(self):
+        """完全冻结所有 BN 层（在 stem 中）"""
+        for module in self.encoder.stem.modules():
+            if isinstance(module, (nn.BatchNorm2d, nn.SyncBatchNorm)):
+                module.eval()
+                module.track_running_stats = True
+                for param in module.parameters():
+                    param.requires_grad = False
+
+    def train(self, mode=True):
+        """重写 train 方法，确保 BN 始终冻结"""
+        super().train(mode)
+        if mode:
+            self.freeze_bn_layers()
+        return self
+
     def forward(self, x):
         """
-        Forward pass RECORD-OI model
-        @param x: input tensor with shape (B, C, H, W) (单帧)
+        Forward pass for Online Inference (Single Frame)
+        @param x: input tensor with shape (B, C, H, W)
+        @return: confidence map with shape (B, n_class, H, W)
         """
-        # 兼容性处理：如果是 (B, C, T, H, W) 且 T=1，则压缩维度
-        if x.dim() == 5:
-            x = x.squeeze(2)
-
-        # 1. 运行 Stem (BN 部分)
-        # 在 eval 模式下，BN 使用训练好的 running stats，单帧输入也没问题
+        # 1. Stem 部分（使用 BatchNorm，需要冻结）
         stem_features = self.encoder.forward_stem(x)
+        # stem_features shape: (B, C_feat, H_feat, W_feat)
 
-        # 2. 获取当前的 LSTM 状态
-        h_list = self.encoder.h_list
-        c_list = self.encoder.c_list
+        # 2. Recurrent 部分（使用 LayerNorm/GroupNorm）
+        # BottleneckLSTM 会自动处理 None 状态的初始化
+        (st_features_backbone, st_features_lstm2, st_features_lstm1), h_list, c_list = \
+            self.encoder.forward_recurrent_step(
+                stem_features,
+                self.encoder.h_list,
+                self.encoder.c_list
+            )
 
-        # 3. 运行 Recurrent Step (LayerNorm 部分)
-        # 这会计算这一帧的特征，并返回新的状态
-        (st_features_backbone, st_features_lstm2, st_features_lstm1), new_h_list, new_c_list = \
-            self.encoder.forward_recurrent_step(stem_features, h_list, c_list)
+        # 3. 更新隐藏状态（用于下一帧）
+        self.encoder.h_list = h_list
+        self.encoder.c_list = c_list
 
-        # 4. 更新状态以便下一帧使用
-        self.encoder.h_list = new_h_list
-        self.encoder.c_list = new_c_list
-
-        # 5. Decoder (使用 LayerNorm)
+        # 4. Decoder
         confmap_pred = self.decoder(st_features_backbone, st_features_lstm2, st_features_lstm1)
 
         return self.sigmoid(confmap_pred)
+
+    def reset_hidden(self):
+        """
+        重置隐藏状态
+        用于：
+        1. 开始处理新的视频序列
+        2. 切换到不相关的帧流
+        """
+        # 调用 encoder 的 __init_hidden__()，设置为 None
+        self.encoder.__init_hidden__()

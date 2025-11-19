@@ -59,7 +59,9 @@ class CruwExecutor(pl.LightningModule):
         # For testing on val set
         self.evalImgs_all = []
         self.n_frames_all = 0
-
+        # === 修改点 1: 初始化状态缓存变量 ===
+        self.train_h_state = None
+        self.train_c_state = None
     def get_loss(self):
         """
         Define the loss function to use according to the configuration file
@@ -92,8 +94,10 @@ class CruwExecutor(pl.LightningModule):
         Define PyTorch training dataloader
         @return: train dataloader for ROD2021 dataset
         """
+        # === 修改点 2: 必须将 shuffle 设为 False ===
+        # 为了让状态在 Batch 之间传递，数据必须是按序列顺序输入的
         return DataLoader(self.train_dataset, batch_size=self.batch_size, collate_fn=cr_collate,
-                          shuffle=True, num_workers=4, drop_last=True)
+                          shuffle=False, num_workers=4, drop_last=True)
 
     def val_dataloader(self):
         """
@@ -108,34 +112,48 @@ class CruwExecutor(pl.LightningModule):
         self.logger.log_hyperparams(self.hparams, {"hp/AP": 0, "hp/AR": 0, "hp/val_loss": 0, "hp/train_loss": 0})
 
     def forward(self, x):
-        """
-        Pytorch Lightning forward pass (inference)
-        @param batch_positions: positional encoding vector (optional - only for UTAE)
-        @param x: input tensor with shape (B, C, T, H, W) where T in the number of timesteps
-        @return: ConfMap prediction
-        """
-        confmap_pred = self.model(x)
+        out = self.model(x)
+        # 兼容逻辑：Buffer 返回元组，Online 返回 Tensor
+        if isinstance(out, tuple):
+            confmap_pred = out[0]
+        else:
+            confmap_pred = out
         return confmap_pred
+
+    def on_train_epoch_start(self):
+        # === 修改点 3: 每个 Epoch 开始时重置状态 ===
+        self.train_h_state = None
+        self.train_c_state = None
 
     def training_step(self, batch, batch_id):
         """
-        Perform one training step (forward + backward) on a batch of data.
-        @param batch: data batch from the dataloader
-        @param batch_id: id of the current batch
-        @return: loss value to log
+        Perform one training step with TBPTT
         """
-        # Get data
         ra_maps = batch['radar_data']  # N, H, W, C
         confmap_gts = batch['anno']['confmaps']
-        image_paths = batch['image_paths']
 
-        confmap_pred = self.model(ra_maps)
+        # === 修改点 4: 处理状态传递 ===
+        # 1. Detach 状态：截断梯度，防止反向传播穿过整个 epoch (会导致显存爆炸)
+        if self.train_h_state is not None:
+            h_state = [h.detach() for h in self.train_h_state]
+            c_state = [c.detach() for c in self.train_c_state]
+        else:
+            h_state = None
+            c_state = None
 
+        # 2. 前向传播：传入上一时刻的状态
+        # 注意：这里 Record.forward 返回三个值了
+        confmap_pred, next_h, next_c = self.model(ra_maps, h_state, c_state)
+
+        # 3. 保存最新的状态给下一个 Batch 用
+        self.train_h_state = next_h
+        self.train_c_state = next_c
+
+        # 4. 计算 Loss (保持不变)
         loss = self.loss_fct(confmap_pred, confmap_gts)
 
-        self.log('train_loss', loss, on_step=True, on_epoch=True, logger=True, sync_dist=True,
-                 batch_size=self.batch_size)
-        self.log('hp/train_loss', loss, on_epoch=True, sync_dist=True, batch_size=self.batch_size)
+        self.log('train_loss', loss, on_step=True, on_epoch=True, logger=True)
+        self.log('hp/train_loss', loss, on_epoch=True)
         return loss
 
     def validation_step(self, batch, batch_id):
