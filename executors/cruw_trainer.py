@@ -131,7 +131,23 @@ class CruwExecutor(pl.LightningModule):
         """
         ra_maps = batch['radar_data']  # N, H, W, C
         confmap_gts = batch['anno']['confmaps']
+        # === 新增：检查序列是否切换 ===
+        # 如果当前 batch 的序列名和上一个 batch 不一样，说明换视频了，必须重置状态！
+        current_seq_names = batch['seq_names']
 
+        # 初始化一个属性来记录上一次的序列名
+        if not hasattr(self, 'last_seq_names'):
+            self.last_seq_names = None
+
+        if self.last_seq_names is not None:
+            # 只要有一个样本的序列名变了，或者为了保险起见，就全部重置
+            # (简化处理：只要 batch 0 的序列名变了就重置，通常 batch 内序列是一致的)
+            if current_seq_names[0] != self.last_seq_names[0]:
+                self.train_h_state = None
+                self.train_c_state = None
+
+        self.last_seq_names = current_seq_names
+        # ============================
         # === 修改点 4: 处理状态传递 ===
         # 1. Detach 状态：截断梯度，防止反向传播穿过整个 epoch (会导致显存爆炸)
         if self.train_h_state is not None:
