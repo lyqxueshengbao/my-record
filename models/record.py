@@ -47,14 +47,12 @@ class Record(nn.Module):
 
         self.sigmoid = nn.Sigmoid()
 
-    # === 修改点 1: 接收 h_list, c_list 参数 ===
     def forward(self, x, h_list=None, c_list=None):
         """
-        Forward pass with state passing (TBPTT compatible)
+        Forward pass with state passing (TBPTT compatible) + Many-to-Many Output
         @param x: input tensor (B, C, T, H, W)
-        @param h_list: list of hidden states from previous batch (optional)
-        @param c_list: list of cell states from previous batch (optional)
-        @return: (confmap_pred, next_h_list, next_c_list)
+        @return: (confmap_preds, next_h_list, next_c_list)
+                 confmap_preds shape: (B, C, T, H, W)
         """
         B, C, T, H, W = x.shape
 
@@ -64,26 +62,32 @@ class Record(nn.Module):
         _, C_feat, H_feat, W_feat = stem_features.shape
         recurrent_input = stem_features.view(B, T, C_feat, H_feat, W_feat)
 
-        # === 修改点 2: 状态初始化逻辑 ===
-        # 如果外部没有传入状态（比如每个 epoch 的第一个 batch），则初始化为 None
+        # 2. 状态初始化
         if h_list is None or c_list is None:
             self.encoder.__init_hidden__()
             h_list = self.encoder.h_list
             c_list = self.encoder.c_list
 
-        # 5. Loop over time
+        # === 核心修改：收集每一帧的预测 ===
+        confmap_preds_list = []
+
         for t in range(T):
             x_t = recurrent_input[:, t, ...]
+
             # 传递并更新状态
-            (st_features_backbone,
-             st_features_lstm2,
-             st_features_lstm1), h_list, c_list = self.encoder.forward_recurrent_step(x_t, h_list, c_list)
+            (st_backbone, st_lstm2, st_lstm1), h_list, c_list = \
+                self.encoder.forward_recurrent_step(x_t, h_list, c_list)
 
-        # 6. Decoder
-        confmap_pred = self.decoder(st_features_backbone, st_features_lstm2, st_features_lstm1)
+            # === 关键：每一帧都解码！===
+            # 这样 ECA 就能见到各种状态下的特征
+            pred_t = self.decoder(st_backbone, st_lstm2, st_lstm1)
+            confmap_preds_list.append(pred_t)
 
-        # === 修改点 3: 返回预测结果以及最新的状态 ===
-        return self.sigmoid(confmap_pred), h_list, c_list
+        # 堆叠结果: (B, T, C, H, W) -> permute to (B, C, T, H, W)
+        # pred_t is (B, C, H, W)
+        confmap_preds = torch.stack(confmap_preds_list, dim=2)
+
+        return self.sigmoid(confmap_preds), h_list, c_list
 
 
 class RecordEncoder(nn.Module):

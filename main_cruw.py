@@ -54,9 +54,9 @@ angle_grid = dataset.angle_grid
 data_dir = config_dict['dataset_cfg']['data_dir']
 
 # Load datasets
-train_dataset = ROD2021Dataset(data_dir=data_dir, dataset=dataset, config_dict=config_dict, all_confmaps=False,
+train_dataset = ROD2021Dataset(data_dir=data_dir, dataset=dataset, config_dict=config_dict, all_confmaps=True,
                                split='train')
-valid_dataset = ROD2021Dataset(data_dir=data_dir, dataset=dataset, config_dict=config_dict, all_confmaps=False,
+valid_dataset = ROD2021Dataset(data_dir=data_dir, dataset=dataset, config_dict=config_dict, all_confmaps=True,
                                split='valid')
 
 log_dir = train_cfg['ckpt_dir']
