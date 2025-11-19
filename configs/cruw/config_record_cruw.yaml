@@ -97,10 +97,10 @@ confmap_cfg:
     cyclist: 2
     car: 3
 train_cfg:
-  ckpt_dir: logs/rod2021_focaloss+mixednorm_fix2
+  ckpt_dir: logs/rod2021_focaloss+mixednorm_fix3
   n_epoch: 100
-  batch_size: 10
-  accumulate_grad: 1
+  batch_size: 1
+  accumulate_grad: 16
   lr: 0.00375
   optimizer: adam
   scheduler: exp
@@ -113,7 +113,7 @@ train_cfg:
   alpha_loss: 0.5
   win_size: 12
   train_step: 1
-  train_stride: 4
+  train_stride: 12
   use_ampl: false
   normalize: false
   train_log_step: 1000
