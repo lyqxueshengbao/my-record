@@ -114,11 +114,12 @@ class CruwExecutor(pl.LightningModule):
     def forward(self, x):
         """
         Pytorch Lightning forward pass (inference)
-        @param batch_positions: positional encoding vector (optional - only for UTAE)
-        @param x: input tensor with shape (B, C, T, H, W) where T in the number of timesteps
-        @return: ConfMap prediction
         """
-        confmap_pred = self.model(x)
+        # === 修改点：这里需要解包，只返回预测结果 ===
+        # 原代码: confmap_pred = self.model(x)
+        # 新代码:
+        confmap_pred, _, _ = self.model(x)
+
         return confmap_pred
 
     def on_train_epoch_start(self):
