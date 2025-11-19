@@ -55,7 +55,7 @@ data_dir = config_dict['dataset_cfg']['data_dir']
 
 # Load datasets
 train_dataset = ROD2021Dataset(data_dir=data_dir, dataset=dataset, config_dict=config_dict, all_confmaps=True,
-                               split='train')
+                               split='train',is_random_chirp=True)
 valid_dataset = ROD2021Dataset(data_dir=data_dir, dataset=dataset, config_dict=config_dict, all_confmaps=True,
                                split='valid')
 

@@ -99,9 +99,10 @@ confmap_cfg:
 train_cfg:
   ckpt_dir: logs/rod2021_focaloss+mixednorm+eca_fix2
   n_epoch: 100
-  batch_size: 8
-  accumulate_grad: 1
-  lr: 0.00375
+  batch_size: 1
+  accumulate_grad: 16
+  lr: 0.0001
+  freeze_bn: true
   optimizer: adam
   scheduler: exp
   # 损失函数选择: 'bce', 'focal', 'smooth_focal', 'mse', 'smooth_ce'
@@ -113,7 +114,7 @@ train_cfg:
   alpha_loss: 0.5
   win_size: 12
   train_step: 1
-  train_stride: 4
+  train_stride: 12
   use_ampl: false
   normalize: false
   train_log_step: 1000

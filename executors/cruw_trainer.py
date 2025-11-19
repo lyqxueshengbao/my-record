@@ -27,6 +27,10 @@ class CruwExecutor(pl.LightningModule):
         self.win_size = self.train_cfg['win_size']
         self.model_name = self.model_cfg['name']
         self.model = model
+        # === 新增：检查配置并冻结 BN ===
+        if self.config['train_cfg'].get('freeze_bn', False):
+            print(">>> [Info] Batch Size=1 Mode: Freezing BN layers for fine-tuning!")
+            self.freeze_bn_layers()
         self.loss_fct = self.get_loss()
         self.train_dataset = train_dataset
         self.val_dataset = val_dataset
@@ -44,6 +48,28 @@ class CruwExecutor(pl.LightningModule):
         self.train_c_state = None
         self.last_seq_names = None
 
+    # === 新增方法 ===
+    def freeze_bn_layers(self):
+        """冻结模型中所有的 BN 层"""
+        for m in self.model.modules():
+            if isinstance(m, (nn.BatchNorm2d, nn.SyncBatchNorm)):
+                m.eval()  # 切换到评估模式 (使用全局 mean/var)
+                m.track_running_stats = False  # 停止更新统计量
+                for param in m.parameters():
+                    param.requires_grad = False  # 停止更新权重 (gamma/beta)
+
+    # === 新增方法 ===
+    def train(self, mode=True):
+        """
+        重写 train，确保在 PL 切换模式时，BN 依然被死死按在 eval 模式
+        """
+        super().train(mode)
+        # 如果开启了冻结配置，且当前是大训练模式，则强制 BN 为 eval
+        if self.config['train_cfg'].get('freeze_bn', False) and mode:
+            for m in self.model.modules():
+                if isinstance(m, (nn.BatchNorm2d, nn.SyncBatchNorm)):
+                    m.eval()
+        return self
     def get_loss(self):
         loss_type = self.train_cfg['loss']
         if loss_type == 'bce':
