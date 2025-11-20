@@ -112,8 +112,8 @@ train_cfg:
 
   # [修改 2] Batch Size 适中
   # 配合 TBPTT，Batch 不宜过大。保持 8 或降为 4 都可以。建议 4 以防显存压力。
-  batch_size: 4
-  accumulate_grad: 8 # 配合小 batch 使用累积梯度
+  batch_size: 2
+  accumulate_grad: 16 # 配合小 batch 使用累积梯度
 
   # [修改 3] 学习率降低
   # Buffer 训练用了 0.00375。微调建议用 1/10 左右，即 0.0003 或 0.0001
