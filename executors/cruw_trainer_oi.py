@@ -40,28 +40,24 @@ class CruwExecutorOI(CruwExecutor):
     # [修改] 去掉 hiddens 参数
     def training_step(self, batch, batch_id):
         """
-        Long-Window Fine-tuning Step
+        Dense Supervision Training Step
         """
         ra_maps = batch['radar_data']
-        confmap_gts = batch['anno']['confmaps']
+        confmap_gts = batch['anno']['confmaps']  # (B, C, T, H, W)
 
-        # =======================================================
-        # [关键修复] 使用 reset_memory() 彻底切断与上一个 Batch 的联系
-        # 它可以防止 "Trying to backward through the graph a second time"
-        # =======================================================
+        # 重置记忆
         if hasattr(self.model, 'reset_memory'):
             self.model.reset_memory()
-        else:
-            # 兜底方案：如果没更新 models 代码，手动强行重置
-            self.model.encoder.__init_hidden__()
-            self.model.h_list = None
-            self.model.c_list = None
 
-        # 前向传播
-        confmap_pred = self.model(ra_maps)
+        # 前向传播 -> 得到 (B, n_class, T, H, W)
+        confmap_preds = self.model(ra_maps)
 
-        # 计算 Loss
-        loss = self.loss_fct(confmap_pred, confmap_gts[:, :, -1])
+        # [关键修改] 计算所有帧的 Loss
+        # 你的 loss_fct (Focal Loss) 通常接受 (Pred, Target)
+        # 只要维度一致，它就能计算。
+        # 确保 confmap_preds 和 confmap_gts 维度完全对齐
+
+        loss = self.loss_fct(confmap_preds, confmap_gts)
 
         self.log('train_loss', loss, on_step=True, on_epoch=True, logger=True)
 
@@ -84,7 +80,11 @@ class CruwExecutorOI(CruwExecutor):
         # ra_maps[:, :, 0] 会变成 4D，我们需要保留 T 维度，或者手动 unsqueeze
         input_frame = ra_maps[:, :, 0:1]  # 切片保持维度 (B, C, 1, H, W)
 
-        confmap_pred = self.forward(input_frame)
+        # 推理时输入 T=1
+        confmap_pred_all = self.model(ra_maps)  # (B, C, 1, H, W)
+
+        # 取第0个时间步 (也是唯一的一个)
+        confmap_pred = confmap_pred_all[:, :, 0]  # (B, C, H, W)
 
         loss = self.loss_fct(confmap_pred, confmap_gts[:, :, 0])
 
@@ -124,7 +124,11 @@ class CruwExecutorOI(CruwExecutor):
 
         # 修改点 3: 确保输入维度匹配 (B, C, 1, H, W)
         input_frame = ra_maps[:, :, 0:1]  # 使用切片 0:1 保持维度
-        confmap_pred = self.forward(input_frame)
+        # 推理时输入 T=1
+        confmap_pred_all = self.model(ra_maps)  # (B, C, 1, H, W)
+
+        # 取第0个时间步 (也是唯一的一个)
+        confmap_pred = confmap_pred_all[:, :, 0]  # (B, C, H, W)
 
         # Write results
         res_final = post_process_single_frame_cruw(confmap_pred[0].cpu(), self.cruw_dataset_obj, self.config)
