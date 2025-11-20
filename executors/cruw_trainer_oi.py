@@ -42,20 +42,25 @@ class CruwExecutorOI(CruwExecutor):
         """
         Long-Window Fine-tuning Step
         """
-        # Get data
-        # ra_maps: (B, C, T, H, W) -> 这里的 T 就是 win_size (32)
         ra_maps = batch['radar_data']
         confmap_gts = batch['anno']['confmaps']
 
-        # 1. 关键：每遇到一个新的长序列 Batch，重置一次记忆
-        self.model.encoder.__init_hidden__()
+        # =======================================================
+        # [关键修复] 使用 reset_memory() 彻底切断与上一个 Batch 的联系
+        # 它可以防止 "Trying to backward through the graph a second time"
+        # =======================================================
+        if hasattr(self.model, 'reset_memory'):
+            self.model.reset_memory()
+        else:
+            # 兜底方案：如果没更新 models 代码，手动强行重置
+            self.model.encoder.__init_hidden__()
+            self.model.h_list = None
+            self.model.c_list = None
 
-        # 2. 前向传播
-        # [修改点]：去掉 ", _"，因为 model 只返回一个 tensor
+        # 前向传播
         confmap_pred = self.model(ra_maps)
 
-        # 3. 计算 Loss
-        # 计算最后一帧的 Loss
+        # 计算 Loss
         loss = self.loss_fct(confmap_pred, confmap_gts[:, :, -1])
 
         self.log('train_loss', loss, on_step=True, on_epoch=True, logger=True)
