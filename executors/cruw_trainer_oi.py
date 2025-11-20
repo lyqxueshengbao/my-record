@@ -40,24 +40,22 @@ class CruwExecutorOI(CruwExecutor):
     # [修改] 去掉 hiddens 参数
     def training_step(self, batch, batch_id):
         """
-        Long-Window Training Step
+        Long-Window Fine-tuning Step
         """
         # Get data
-        ra_maps = batch['radar_data']  # B, C, T, H, W
+        # ra_maps: (B, C, T, H, W) -> 这里的 T 就是 win_size (32)
+        ra_maps = batch['radar_data']
         confmap_gts = batch['anno']['confmaps']
 
-        # [修改] 每次 Batch 开始时初始化隐状态
-        # 虽然这看起来像 Buffer 模式，但我们会通过增大 Config 中的 win_size 来达到微调目的
+        # 1. 关键：每遇到一个新的长序列 Batch，重置一次记忆
         self.model.encoder.__init_hidden__()
 
-        # 这里的 ra_maps 长度取决于 Config 中的 win_size
-        # 如果 win_size 设得够大 (例如 32)，模型就会学会在 32 帧内保持稳定
+        # 2. 前向传播
+        # [修改点]：去掉 ", _"，因为 model 只返回一个 tensor
+        confmap_pred = self.model(ra_maps)
 
-        # 传入完整序列
-        confmap_pred, _ = self.model(ra_maps)
-
-        # 计算 Loss (建议计算序列中所有帧的 Loss，或者只计算最后几帧)
-        # 这里保持简单，计算最后一帧
+        # 3. 计算 Loss
+        # 计算最后一帧的 Loss
         loss = self.loss_fct(confmap_pred, confmap_gts[:, :, -1])
 
         self.log('train_loss', loss, on_step=True, on_epoch=True, logger=True)
