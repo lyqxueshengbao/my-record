@@ -1,9 +1,22 @@
+from torch import nn
+from .record import RecordEncoder, RecordDecoder
+from .layers.inverted_residual import Conv3x3ReLUNorm, InvertedResidual
+from .layers.bottleneck_lstm import BottleneckLSTM
+from utils.models_utils import _make_divisible
+
+"""
+Entrainement en initialisant les états sur les k premières frames puis prédire les suivantes
+
+Online learning LSTM biblio 
+
+"""
+
 import torch
 import torch.nn as nn
 
 
 # 请确保正确导入了 RecordEncoder 和 RecordDecoder
-# from models.record_encoder import RecordEncoder 
+# from models.record_encoder import RecordEncoder
 # from models.record_decoder import RecordDecoder
 
 class RecordOI(nn.Module):
