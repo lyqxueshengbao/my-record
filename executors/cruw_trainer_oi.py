@@ -11,38 +11,41 @@ from cruw.eval.rod.rod_eval_utils import accumulate, summarize
 
 class CruwExecutorOI(CruwExecutor):
 
+    def on_train_start(self):
+        # 冻结 Backbone 保持不变
+        print("Freezing Backbone (Stem) for Online Fine-tuning...")
+        for param in self.model.encoder.stem.parameters():
+            param.requires_grad = False
+        self.model.encoder.conv_lstm1.train()
+        self.model.encoder.conv_lstm2.train()
+        self.model.decoder.train()
+
+    # [修改] 去掉 hiddens 参数
     def training_step(self, batch, batch_id):
         """
-        Perform one training step (forward + backward) on a batch of data.
+        Long-Window Training Step
         """
         # Get data
-        ra_maps = batch['radar_data']  # N, C, T, H, W
+        ra_maps = batch['radar_data']  # B, C, T, H, W
         confmap_gts = batch['anno']['confmaps']
 
-        total_loss = 0
+        # [修改] 每次 Batch 开始时初始化隐状态
+        # 虽然这看起来像 Buffer 模式，但我们会通过增大 Config 中的 win_size 来达到微调目的
+        self.model.encoder.__init_hidden__()
 
-        # 如果是训练模式，每个Batch开始前重置记忆
-        if hasattr(self.model, 'reset_memory'):
-            self.model.reset_memory()
-        else:
-            self.model.encoder.__init_hidden__()
+        # 这里的 ra_maps 长度取决于 Config 中的 win_size
+        # 如果 win_size 设得够大 (例如 32)，模型就会学会在 32 帧内保持稳定
 
-        for t in range(ra_maps.shape[2]):
-            # 修改点 1: 增加维度，确保输入为 (B, C, 1, H, W)
-            # ra_maps[:, :, t] 是 (B, C, H, W) -> unsqueeze(2) -> (B, C, 1, H, W)
-            input_frame = ra_maps[:, :, t].unsqueeze(2)
+        # 传入完整序列
+        confmap_pred, _ = self.model(ra_maps)
 
-            confmap_pred = self.model(input_frame)
+        # 计算 Loss (建议计算序列中所有帧的 Loss，或者只计算最后几帧)
+        # 这里保持简单，计算最后一帧
+        loss = self.loss_fct(confmap_pred, confmap_gts[:, :, -1])
 
-            # 计算 Loss
-            loss = self.loss_fct(confmap_pred, confmap_gts[:, :, t])
-            total_loss += loss
+        self.log('train_loss', loss, on_step=True, on_epoch=True, logger=True)
 
-        total_loss = total_loss / ra_maps.shape[2]
-        self.log('train_loss', total_loss, on_step=True, on_epoch=True, logger=True)
-        self.log('hp/train_loss', total_loss, on_epoch=True)
-
-        return total_loss
+        return loss
 
     def val_dataloader(self):
         return DataLoader(self.val_dataset, batch_size=1, collate_fn=cr_collate,

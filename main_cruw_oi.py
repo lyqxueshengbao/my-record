@@ -144,7 +144,8 @@ trainer = pl.Trainer(logger=logger, callbacks=callbacks, accelerator=accelerator
                      deterministic=deterministic,
                      accumulate_grad_batches=train_cfg['accumulate_grad'],
                      # 关键参数！开启 TBPTT
-                     truncated_bptt_steps=train_cfg['win_size'])
+                     # truncated_bptt_steps=train_cfg['win_size']
+                     )
 
 print('Start training (Fine-tuning)')
 # 注意：这里不要用 ckpt_path=args.resume_ckpt，除非你想恢复中断的微调
