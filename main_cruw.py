@@ -108,8 +108,7 @@ else:
 
 trainer = pl.Trainer(logger=logger, callbacks=callbacks, accelerator=accelerator, strategy='ddp', devices=6,
                      max_epochs=train_cfg['n_epoch'], deterministic=deterministic,
-                     accumulate_grad_batches=train_cfg['accumulate_grad'],
-                     precision=16)  # 保持 FP16
+                     accumulate_grad_batches=train_cfg['accumulate_grad'])  # 保持 FP16
 
 print('Start training')
 
