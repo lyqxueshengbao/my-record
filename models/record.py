@@ -47,47 +47,53 @@ class Record(nn.Module):
 
         self.sigmoid = nn.Sigmoid()
 
-    def forward(self, x, h_list=None, c_list=None):
+    def forward(self, x):
         """
-        Forward pass with state passing (TBPTT compatible) + Many-to-Many Output
-        @param x: input tensor (B, C, T, H, W)
-        @return: (confmap_preds, next_h_list, next_c_list)
-                 confmap_preds shape: (B, C, T, H, W)
+        Forward pass RECORD model (MODIFIED FOR HYBRID NORM)
+        *** 这是快速的 forward 版本 ***
+
+        @param x: input tensor with shape (B, C, T, H, W) where T is the number of timesteps
+        @return: ConfMap prediction of the last time step with shape (B, n_classes, H, W)
         """
         B, C, T, H, W = x.shape
+        assert len(x.shape) == 5
 
-        # 1. Stem (BN)
+        # 1. Reshape for Stem (BN part)
+        # (B, C, T, H, W) -> (B, T, C, H, W) -> (B*T, C, H, W)
         x_reshaped = x.permute(0, 2, 1, 3, 4).contiguous().view(B * T, C, H, W)
+
+        # 2. Run Stem (BN part) - 在循环外执行 1 次
+        # self.encoder.train() vs eval() mode will be handled by pytorch_lightning
+        # stem_features shape: (B*T, C_feat, H_feat, W_feat)
         stem_features = self.encoder.forward_stem(x_reshaped)
+
+        # 3. Reshape for Recurrent (GN/LayerNorm part)
+        # (B*T, C_feat, H_feat, W_feat) -> (B, T, C_feat, H_feat, W_feat)
         _, C_feat, H_feat, W_feat = stem_features.shape
         recurrent_input = stem_features.view(B, T, C_feat, H_feat, W_feat)
 
-        # 2. 状态初始化
-        if h_list is None or c_list is None:
-            self.encoder.__init_hidden__()
-            h_list = self.encoder.h_list
-            c_list = self.encoder.c_list
+        # 4. Initialize hidden states
+        # (这会设置 self.encoder.h_list = [None, None], self.encoder.c_list = [None, None])
+        self.encoder.__init_hidden__()
+        h_list = self.encoder.h_list
+        c_list = self.encoder.c_list
 
-        # === 核心修改：收集每一帧的预测 ===
-        confmap_preds_list = []
-
+        # 5. Loop over time (Recurrent part) - 只执行循环必要的
         for t in range(T):
+            # Get features for this timestep
             x_t = recurrent_input[:, t, ...]
 
-            # 传递并更新状态
-            (st_backbone, st_lstm2, st_lstm1), h_list, c_list = \
-                self.encoder.forward_recurrent_step(x_t, h_list, c_list)
+            # (st_features_backbone,
+            #  st_features_lstm2,
+            #  st_features_lstm1) 存储最后一个时间步的输出
+            (st_features_backbone,
+             st_features_lstm2,
+             st_features_lstm1), h_list, c_list = self.encoder.forward_recurrent_step(x_t, h_list, c_list)
 
-            # === 关键：每一帧都解码！===
-            # 这样 ECA 就能见到各种状态下的特征
-            pred_t = self.decoder(st_backbone, st_lstm2, st_lstm1)
-            confmap_preds_list.append(pred_t)
-
-        # 堆叠结果: (B, T, C, H, W) -> permute to (B, C, T, H, W)
-        # pred_t is (B, C, H, W)
-        confmap_preds = torch.stack(confmap_preds_list, dim=2)
-
-        return self.sigmoid(confmap_preds), h_list, c_list
+        # Decoder 仅使用最后一个时间步的特征
+        # 6. Run Decoder
+        confmap_pred = self.decoder(st_features_backbone, st_features_lstm2, st_features_lstm1)
+        return self.sigmoid(confmap_pred)
 
 
 class RecordEncoder(nn.Module):
