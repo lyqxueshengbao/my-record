@@ -95,7 +95,8 @@ class CruwExecutorOI(CruwExecutor):
             start_frame_name = image_paths[0][0][0].split('/')[-1].split('.')[0].split('_')[0]
             frame_name = image_paths[0][-1][0].split('/')[-1].split('.')[0].split('_')[0]
             frame_id = int(frame_name)
-
+        if frame_id % 16 == 0:
+            self.model.reset_memory()
         assert ra_maps.shape[2] == 1 and ra_maps.shape[0] == 1, "Batch size and window size must be one for inference."
 
         # 修改点 3: 确保输入维度匹配 (B, C, 1, H, W)
