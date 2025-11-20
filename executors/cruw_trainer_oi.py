@@ -12,13 +12,30 @@ from cruw.eval.rod.rod_eval_utils import accumulate, summarize
 class CruwExecutorOI(CruwExecutor):
 
     def on_train_start(self):
-        # 冻结 Backbone 保持不变
         print("Freezing Backbone (Stem) for Online Fine-tuning...")
-        for param in self.model.encoder.stem.parameters():
-            param.requires_grad = False
-        self.model.encoder.conv_lstm1.train()
-        self.model.encoder.conv_lstm2.train()
-        self.model.decoder.train()
+
+        # 1. 【反向操作第一步】全员开启训练模式
+        # 这确保了 bottleneck_lstm1, bottleneck_lstm2, decoder, ECA层 等全部进入训练状态
+        self.model.train()
+
+        # 2. 【反向操作第二步】精准冻结 Stem
+        # 根据你提供的代码，RecordEncoder 里确实定义了 self.stem = nn.Sequential(...)
+        if hasattr(self.model.encoder, 'stem'):
+            # 2.1 切换到 eval 模式 (锁定 BatchNorm 的 running_mean/var)
+            self.model.encoder.stem.eval()
+
+            # 2.2 冻结梯度 (不更新权重)
+            for param in self.model.encoder.stem.parameters():
+                param.requires_grad = False
+            print(">> Backbone (Stem) frozen successfully.")
+        else:
+            print("!! Warning: 'stem' not found in encoder. Training everything.")
+
+        # 检查一下 LSTM 是否真的开启了梯度 (调试用)
+        # 根据你的代码，变量名是 bottleneck_lstm1
+        if hasattr(self.model.encoder, 'bottleneck_lstm1'):
+            lstm_grad = next(self.model.encoder.bottleneck_lstm1.parameters()).requires_grad
+            print(f">> LSTM Training Enabled: {lstm_grad}")
 
     # [修改] 去掉 hiddens 参数
     def training_step(self, batch, batch_id):
