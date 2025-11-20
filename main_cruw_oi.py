@@ -140,9 +140,10 @@ else:
 print(f"Starting Fine-tuning with TBPTT steps = {train_cfg['win_size']}")
 
 trainer = pl.Trainer(logger=logger, callbacks=callbacks, accelerator=accelerator, devices=1,
-                     max_epochs=5,  # 建议写死一个小数字，或者在 config 里改小
+                     max_epochs=6,  # 建议写死一个小数字，或者在 config 里改小
                      deterministic=deterministic,
                      accumulate_grad_batches=train_cfg['accumulate_grad'],
+                     gradient_clip_val=1.0,
                      # 关键参数！开启 TBPTT
                      # truncated_bptt_steps=train_cfg['win_size']
                      )

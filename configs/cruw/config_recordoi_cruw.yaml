@@ -112,12 +112,12 @@ train_cfg:
 
   # [修改 2] Batch Size 适中
   # 配合 TBPTT，Batch 不宜过大。保持 8 或降为 4 都可以。建议 4 以防显存压力。
-  batch_size: 2
-  accumulate_grad: 4 # 配合小 batch 使用累积梯度
+  batch_size: 4
+  accumulate_grad: 8 # 配合小 batch 使用累积梯度
 
   # [修改 3] 学习率降低
   # Buffer 训练用了 0.00375。微调建议用 1/10 左右，即 0.0003 或 0.0001
-  lr: 0.00002
+  lr: 0.0002
   optimizer: adam
   scheduler: exp
 
@@ -132,8 +132,8 @@ train_cfg:
   # Buffer 训练是 12。这里建议设为 16 或 32。
   # 设为 16 的话，配合 Python 脚本中的 truncated_bptt_steps=16，
   # 意味着模型每次处理 16 帧，传递一次记忆。这比 Buffer 的 12 帧稍微长一点，适合微调。
-  win_size: 32
-
+  win_size: 64
+  weight_decay: 0.0001
   train_step: 1
   train_stride: 8 # 保持 stride，让数据有一定的重叠
   use_ampl: false
@@ -147,7 +147,7 @@ train_cfg:
   aug:
     mirror: 0.5
     reverse: 0.0 # 建议关闭倒放，因为我们要学正确的因果时序
-    gaussian: 0.0 # 关闭噪声
+    gaussian: 0.1 # 关闭噪声
 
 test_cfg:
   test_step: 1
