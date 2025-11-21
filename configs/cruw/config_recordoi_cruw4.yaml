@@ -132,7 +132,7 @@ train_cfg:
   # Buffer 训练是 12。这里建议设为 16 或 32。
   # 设为 16 的话，配合 Python 脚本中的 truncated_bptt_steps=16，
   # 意味着模型每次处理 16 帧，传递一次记忆。这比 Buffer 的 12 帧稍微长一点，适合微调。
-  win_size: 24
+  win_size: 20
 
   train_step: 1
   train_stride: 8 # 保持 stride，让数据有一定的重叠
