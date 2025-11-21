@@ -117,7 +117,7 @@ train_cfg:
 
   # [修改 3] 学习率降低
   # Buffer 训练用了 0.00375。微调建议用 1/10 左右，即 0.0003 或 0.0001
-  lr: 0.0002
+  lr: 0.0001
   optimizer: adam
   scheduler: exp
 
