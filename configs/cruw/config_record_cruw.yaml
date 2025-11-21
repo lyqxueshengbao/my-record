@@ -65,8 +65,9 @@ dataset_cfg:
   - 0.06600033
   mean_ampl: 0.04367220899658192
   std_ampl: 0.08244549426031758
+
 model_cfg:
-  name: RECORD
+  name: RECORD-OI
   backbone_pth: /home/liyuqin/projects/record//models/configs/record_cruw.yaml
   width_mult: 1.0
   sensor_config: sensor_config_rod2021
@@ -77,6 +78,7 @@ model_cfg:
   max_dets: 20
   peak_thres: 0.3
   ols_thres: 0.3
+
 confmap_cfg:
   confmap_sigmas:
     pedestrian: 15
@@ -96,33 +98,57 @@ confmap_cfg:
     pedestrian: 1
     cyclist: 2
     car: 3
+
+# ============================================================
+# 关键修改区域：Train Config
+# ============================================================
 train_cfg:
-  ckpt_dir: logs/rod2021_focaloss+mixednorm+eca
-  n_epoch: 100
-  batch_size: 10
-  accumulate_grad: 1
-  lr: 0.00375
+  # 建议修改日志目录名，以便区分这是微调 (Finetune) 的版本
+  ckpt_dir: logs/rod2021_oi_focaloss+mixednorm+eca_1121_4
+
+  # [修改 1] Epochs 大幅减少
+  # 微调只需要很少的轮数，太多会过拟合或破坏预训练特征
+  n_epoch: 15
+
+  # [修改 2] Batch Size 适中
+  # 配合 TBPTT，Batch 不宜过大。保持 8 或降为 4 都可以。建议 4 以防显存压力。
+  batch_size: 8
+  accumulate_grad: 1 # 配合小 batch 使用累积梯度
+
+  # [修改 3] 学习率降低
+  # Buffer 训练用了 0.00375。微调建议用 1/10 左右，即 0.0003 或 0.0001
+  lr: 0.00005
   optimizer: adam
   scheduler: exp
-  # 损失函数选择: 'bce', 'focal', 'smooth_focal', 'mse', 'smooth_ce'
-  loss: focal  # 改为使用 Focal Loss
-  # Focal Loss 参数
-  focal_alpha: 0.25  # 平衡正负样本权重 (default: 0.25)
-  focal_gamma: 2.0   # 聚焦参数，降低易分类样本的权重 (default: 2.0)
-  # 如果使用 smooth_focal 或 smooth_ce，alpha_loss 控制两种损失的混合比例
+
+  # [修改 4] Loss 必须与 Buffer 模式对齐！(非常重要)
+  # 原来是 bce，必须改成 focal，参数也要一致
+  loss: focal
+  focal_alpha: 0.25
+  focal_gamma: 2.0
   alpha_loss: 0.5
-  win_size: 12
+
+  # [修改 5] Window Size (TBPTT 步长)
+  # Buffer 训练是 12。这里建议设为 16 或 32。
+  # 设为 16 的话，配合 Python 脚本中的 truncated_bptt_steps=16，
+  # 意味着模型每次处理 16 帧，传递一次记忆。这比 Buffer 的 12 帧稍微长一点，适合微调。
+  win_size: 24
+
   train_step: 1
-  train_stride: 4
+  train_stride: 8 # 保持 stride，让数据有一定的重叠
   use_ampl: false
   normalize: false
-  train_log_step: 1000
+  train_log_step: 100
   val_log_step: 100
   test_log_step: 200
+
+  # [修改 6] 数据增强
+  # 微调时尽量减少强烈的数据增强，让模型专注于时序关系
   aug:
     mirror: 0.5
-    reverse: 0.5
-    gaussian: 0.0
+    reverse: 0.0 # 建议关闭倒放，因为我们要学正确的因果时序
+    gaussian: 0.0 # 关闭噪声
+
 test_cfg:
   test_step: 1
   test_stride: 1
