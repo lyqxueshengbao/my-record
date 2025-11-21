@@ -147,7 +147,7 @@ train_cfg:
   aug:
     mirror: 0.5
     reverse: 0.0 # 建议关闭倒放，因为我们要学正确的因果时序
-    gaussian: 0.0 # 关闭噪声
+    gaussian: 0.1 # 关闭噪声
 
 test_cfg:
   test_step: 1
