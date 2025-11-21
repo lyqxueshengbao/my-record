@@ -115,7 +115,7 @@ checkpoint_callback = ModelCheckpoint(dirpath=None, monitor='val_loss', mode="mi
 lr_tracker = LearningRateMonitor()
 
 # 微调通常收敛很快，可以适当减少 patience
-early_stop = EarlyStopping(monitor='val_loss', patience=3, mode='min')
+early_stop = EarlyStopping(monitor='val_loss', patience=5, mode='min')
 callbacks = [checkpoint_callback, lr_tracker, early_stop]
 
 model_cfg = config_dict['model_cfg']
